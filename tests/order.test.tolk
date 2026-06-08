@@ -9,6 +9,8 @@ const GAS = ton("0.05")
 const REWARD = ton("1")
 const ACCEPT_FEE = ton("0.1") // courier's service fee (>= MIN_ACCEPT_FEE 0.1)
 const BELOW_FEE = ton("0.02") // below MIN_ACCEPT_FEE; accept must reject it
+const CANCEL_FEE = ton("0.3")  // sender's cancel fee; must match Order.tolk
+const RELEASE_FEE = ton("0.2") // courier's release fee; must match Order.tolk
 const DEADLINE = 60 * 60 // must match Order.tolk (1h testing value)
 // A fixed "now" for time-dependent tests. Must be in the FUTURE relative to the
 // emulator's default wall-clock time, otherwise setNow() would move time
@@ -108,6 +110,7 @@ get fun `test accept with a large reward does not overflow`() {
         courier: null,
         description: createEmptyCell(),
         area: createEmptyCell(),
+        origin: createEmptyCell(),
         reward: bigCoins,
         status: OrderStatus.Open,
         nonce: 0,
@@ -206,24 +209,24 @@ get fun `test cancel refunds reward to sender and buffer to owner`() {
     val senderMid = testing.getAccountBalance(sender.address);
     val ownerMid = testing.getAccountBalance(owner.address);
 
-    val r = order.sendCancelOrder(sender.address, { value: GAS });
+    // Cancelling now costs the sender the 0.3 TON cancel fee, attached here.
+    val r = order.sendCancelOrder(sender.address, { value: CANCEL_FEE });
     expect(r).toHaveSuccessfulTx<CancelOrder>({ from: sender.address, to: order.address });
 
     // Contract must be destroyed.
     expect(testing.getAccountBalance(order.address)).toBeLess(ton("0.001"));
 
-    // The sender gets their reward back plus the change of the cancel gas they
-    // sent (mode 64), but NOT the create fee buffer. If the old code had returned
-    // the whole balance, senderGain would be about REWARD + the buffer (~0.3 here)
-    // and the upper bound fails.
+    // The sender receives their reward back in full (the 0.3 cancel fee they
+    // attached is NOT refunded — it stays for the platform). Test treasuries only
+    // track funds RECEIVED, so senderGain ≈ REWARD here.
     val senderGain = testing.getAccountBalance(sender.address) - senderMid;
-    expect(senderGain).toBeGreater(REWARD - ton("0.1"));
-    expect(senderGain).toBeLess(REWARD + ton("0.05"));
+    expect(senderGain).toBeGreater(REWARD - ton("0.02"));
+    expect(senderGain).toBeLess(REWARD + ton("0.02"));
 
-    // The owner gets the leftover buffer as the cancellation fee. Previously the
-    // owner got nothing on cancel, so this must be clearly positive.
+    // The owner receives the leftover: the deploy buffer this test funded (~0.3)
+    // plus the 0.3 cancel fee — clearly more than the buffer alone (~0.6).
     val ownerGain = testing.getAccountBalance(owner.address) - ownerMid;
-    expect(ownerGain).toBeGreater(ton("0.1"));
+    expect(ownerGain).toBeGreater(ton("0.4"));
 }
 
 // Realistic funding: the UI sends only reward + 0.1 service fee (not the 0.3 the
@@ -239,6 +242,7 @@ get fun `test cancel works with the real 0.1 create fee`() {
         courier: null,
         description: createEmptyCell(),
         area: createEmptyCell(),
+        origin: createEmptyCell(),
         reward: REWARD,
         status: OrderStatus.Open,
         nonce: 0,
@@ -257,21 +261,22 @@ get fun `test cancel works with the real 0.1 create fee`() {
     val senderMid = testing.getAccountBalance(sender.address);
     val ownerMid = testing.getAccountBalance(owner.address);
 
-    val r = order.sendCancelOrder(sender.address, { value: GAS });
+    val r = order.sendCancelOrder(sender.address, { value: CANCEL_FEE });
     expect(r).toHaveSuccessfulTx<CancelOrder>({ from: sender.address, to: order.address });
     expect(testing.getAccountBalance(order.address)).toBeLess(ton("0.001"));
 
-    // Reward comes back in full (tolerate fwd fee); the small leftover is the
-    // owner's fee, so the owner must still gain something.
+    // The sender receives the reward back in full (the 0.3 cancel fee is not
+    // refunded). Treasuries only track received funds, so senderGain ≈ REWARD.
     val senderGain = testing.getAccountBalance(sender.address) - senderMid;
-    expect(senderGain).toBeGreater(REWARD - ton("0.1"));
-    expect(senderGain).toBeLess(REWARD + ton("0.05"));
-    expect(testing.getAccountBalance(owner.address) - ownerMid).toBeGreater(0 as coins);
+    expect(senderGain).toBeGreater(REWARD - ton("0.02"));
+    expect(senderGain).toBeLess(REWARD + ton("0.02"));
+    // The owner earns the 0.1 create fee already held plus the 0.3 cancel fee ≈ 0.4.
+    expect(testing.getAccountBalance(owner.address) - ownerMid).toBeGreater(ton("0.35"));
 }
 
-// ---- courier gives up an accepted order: it reopens and the accept fee is refunded ----
+// ---- courier gives up an accepted order: it reopens and the platform earns the fee ----
 
-get fun `test courier release reopens the order and refunds the accept fee`() {
+get fun `test courier release reopens the order and charges the release fee`() {
     val (order, sender, courier, owner) = setupOrderTest();
     testing.setNow(BASE_TIME);
     order.sendAcceptOrder(courier.address, createEmptyCell(), { value: ACCEPT_FEE });
@@ -282,7 +287,8 @@ get fun `test courier release reopens the order and refunds the accept fee`() {
     val ownerMid = testing.getAccountBalance(owner.address);
     val orderMid = testing.getAccountBalance(order.address);
 
-    val r = order.sendCourierRelease(courier.address, { value: GAS });
+    // Giving up the order now costs the courier the 0.2 TON release fee, attached here.
+    val r = order.sendCourierRelease(courier.address, { value: RELEASE_FEE });
     expect(r).toHaveSuccessfulTx<CourierRelease>({ from: courier.address, to: order.address });
 
     // The order reopened instead of closing, and looks like a fresh Open order:
@@ -293,19 +299,27 @@ get fun `test courier release reopens the order and refunds the accept fee`() {
     expect(data.extra.load().courierContact.hash()).toEqual(createEmptyCell().hash());
 
     // The reward and the sender's create fee stay on the contract (still above
-    // REWARD), but the courier's 0.1 accept fee was refunded, so the contract
-    // balance dropped by ~0.1 compared with the accepted state. Sender and owner
-    // were not paid.
+    // REWARD), ready for the next courier. The sender is not paid.
     expect(testing.getAccountBalance(order.address)).toBeGreater(REWARD);
-    expect(orderMid - testing.getAccountBalance(order.address)).toBeGreater(ton("0.08"));
     expect(testing.getAccountBalance(sender.address)).toEqual(senderMid);
-    expect(testing.getAccountBalance(owner.address)).toEqual(ownerMid);
 
-    // The courier got their full accept fee back plus the change of their release
-    // gas (mode 64), so giving up the order costs them only the tx gas — they come
-    // out roughly +0.1 versus before the release.
+    // The platform now earns ~0.3 TON on a release: the 0.1 accept fee the contract
+    // already held (no longer refunded) plus the 0.2 release fee just attached.
+    val ownerGain = testing.getAccountBalance(owner.address) - ownerMid;
+    expect(ownerGain).toBeGreater(ton("0.25"));
+    expect(ownerGain).toBeLess(ton("0.35"));
+
+    // The courier is NOT made whole any more: they get nothing back (no accept-fee
+    // refund), unlike the old behaviour where they received ~0.1. Treasuries only
+    // track received funds, so courierGain ≈ 0 here (and is certainly not positive).
     val courierGain = testing.getAccountBalance(courier.address) - courierMid;
-    expect(courierGain).toBeGreater(ton("0.05"));
+    expect(courierGain).toBeLess(ton("0.02"));
+    expect(courierGain).toBeGreater(-ton("0.02"));
+
+    // The contract balance is back to a fresh Open order's funding: the 0.2 fee
+    // came in and 0.3 went to the owner, so it dropped by ~0.1 (the accept fee)
+    // from the accepted state captured in orderMid.
+    expect(orderMid - testing.getAccountBalance(order.address)).toBeGreater(ton("0.05"));
 
     // A different courier can now take the reopened order.
     val courier2 = testing.treasury("courier2");
@@ -418,6 +432,7 @@ fun setupOrderTest(): (Order, Treasury, Treasury, Treasury) {
         courier: null,
         description: createEmptyCell(),
         area: createEmptyCell(),
+        origin: createEmptyCell(),
         reward: REWARD,
         status: OrderStatus.Open,
         nonce: 0,

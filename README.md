@@ -23,10 +23,17 @@ how the service works.
 | Create order | Sender (reward + 0.1 TON service fee) | Marketplace |
 | Accept order | Courier (0.1 TON service fee) | Marketplace |
 | Confirm delivery | — | Courier gets the reward |
-| Cancel (expired) | — | Sender gets the reward back |
-| Courier release | — | Courier gets the 0.1 TON accept fee back |
+| Claim (expired) | — | Sender gets the reward back |
+| Cancel order | Sender (0.3 TON fee, on top of the 0.1 create fee) | Sender gets the reward back; Marketplace keeps ~0.4 |
+| Courier release | Courier (0.2 TON fee; the 0.1 accept fee is also kept) | Order reopens; Marketplace keeps ~0.3 |
 
-The service fee covers TON network costs and platform operation.
+A normal create → accept → confirm earns the platform ~0.2 TON. Cancelling an order
+or giving up an accepted one costs an extra fee that the platform keeps; the reward
+is always returned in full. The service fee covers TON network costs and platform
+operation.
+
+Each order also records two public cities: a destination ("to") and an origin
+("from", default "All world").
 
 ## Build and test
 

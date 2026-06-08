@@ -53,6 +53,7 @@ fun Marketplace.sendCreateOrder(
     createdAt: uint32,
     description: cell,
     area: cell,
+    origin: cell,
     senderContact: cell,
     config: SendParams = {},
 ): SendResultList {
@@ -60,7 +61,7 @@ fun Marketplace.sendCreateOrder(
         bounce: config.bounce,
         value: config.value,
         dest: self.address,
-        body: CreateOrder { reward, nonce, createdAt, description, area, senderContact },
+        body: CreateOrder { reward, nonce, createdAt, description, area, origin, senderContact },
     });
     return net.send(from, genericMsg);
 }
@@ -92,6 +93,7 @@ fun Marketplace.orderAddress(
     createdAt: uint32,
     description: cell,
     area: cell,
+    origin: cell,
     senderContact: cell,
 ): address {
     return net.runGetMethod(
@@ -104,6 +106,7 @@ fun Marketplace.orderAddress(
             createdAt,
             description,
             area,
+            origin,
             senderContact,
         ],
     );

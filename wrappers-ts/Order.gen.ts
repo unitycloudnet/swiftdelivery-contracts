@@ -202,6 +202,7 @@ export const OrderExtra = {
  >     courier: address?
  >     description: cell
  >     area: cell
+ >     origin: cell
  >     reward: coins
  >     status: OrderStatus
  >     nonce: uint64
@@ -216,6 +217,7 @@ export interface OrderStorage {
     courier: c.Address | null
     description: c.Cell
     area: c.Cell
+    origin: c.Cell
     reward: coins
     status: OrderStatus
     nonce: uint64
@@ -230,6 +232,7 @@ export const OrderStorage = {
         courier: c.Address | null
         description: c.Cell
         area: c.Cell
+        origin: c.Cell
         reward: coins
         status: OrderStatus
         nonce: uint64
@@ -249,6 +252,7 @@ export const OrderStorage = {
             courier: s.loadMaybeAddress(),
             description: s.loadRef(),
             area: s.loadRef(),
+            origin: s.loadRef(),
             reward: s.loadCoins(),
             status: OrderStatus.fromSlice(s),
             nonce: s.loadUintBig(64),
@@ -262,6 +266,7 @@ export const OrderStorage = {
         b.storeAddress(self.courier);
         b.storeRef(self.description);
         b.storeRef(self.area);
+        b.storeRef(self.origin);
         b.storeCoins(self.reward);
         OrderStatus.store(self.status, b);
         b.storeUint(self.nonce, 64);
@@ -470,7 +475,7 @@ function calculateDeployedAddress(code: c.Cell, data: c.Cell, options: DeployedA
 }
 
 export class Order implements c.Contract {
-    static CodeCell = c.Cell.fromBase64('te6ccgECDAEAAnYAART/APSkE/S88sgLAQIBYgIDAvjQ+JGRMOAg7UTQ+kj6UNTU+gDTByHCBPJF1l/TH9dMCdcsJQBQAAyOQjE2OPLQZPiXghAF9eEAvvLgZ/iS+CMH0PpI1NQx0QbXTAHI+lIWzBXMyQXI+lIU+lQSzMwB+gLPhAYTzssfzMntVODXLCUAUAAU4wLXLCUAUAAkBAUCAVgKCwDOMDkBwAHy4GT4kibHBfLgZSXI+lJSUPpUFMwSzCH6As+EChLOFcsfI88Uye1UyM+FCPpSUAP6AnDPC2rJcfsAyM+FCBL6UnDPC27JgED7AND6SNQx1DHRyM+FCPpScM8LbsmBAKD7AAP+jmgwOQHAAfLgZPgjKIEOEKC88uBoJcj6UhX6VBPMzCH6As+EEhLOFMsfIs8Uye1UyM+FCPpSWPoCcM8Laslx+wD4ksjPhQj6UnDPC27JgED7AND6SNQx1DHRyM+FCPpScM8LbsmBAKD7AODXLCUAUAAc4wIx1ywlAFAALDHjAgYHCACmMDkB8tBk+JImxwXy4GUlyPpSFfpUE8zMIfoCz4QOEs4Uyx8izxTJ7VTIz4UI+lJY+gJwzwtqyYBA+wDQ+kjUMdQx0cjPhQj6UnDPC27JgQCg+wABqjjAAfLgZPiSFMcF8uBmbQXQ+kjU1DHRiALI+lLMzMkEyPpSFfpUzBPMWPoCz4QCEs7PkAAAAALMye1UghAF9eEA+JLIz4UI+lIB+gJwzwtqyYBA+wAJABJfCIQPAccA8vQAAAAtuNCu1E0PpIMfpQMfoAMdcLByDCBPJFgAObmDftRND6SPpQ1NT6ANMHIcIE8kXTP9Mf0x/XTI');
+    static CodeCell = c.Cell.fromBase64('te6ccgECDQEAAqIAART/APSkE/S88sgLAQIBYgIDBPjQ+JGRMOAg7UTQ+kj6UNTU1PoA0wchwgTyRdZf0x/XTArXLCUAUAAMjkMxNzny0GT4l4IQBfXhAL7y4Gf4kvgjCND6SNTUMdEH10wByPpSF8wWzMkGyPpSFfpUE8zMzAH6As+EBhPOyx/Mye1U4NcsJQBQABTjAonXJ+MCBAUGBwIBWAsMANAwOgHAAfLgZPiSJ8cF8uBlJsj6UlJg+lQVzBPMzCH6As+EChLOFcsfI88Uye1UyM+FCPpSUAP6AnDPC2rJcfsAyM+FCBL6UnDPC27JgED7AND6SNQx1DHRyM+FCPpScM8LbsmBAKD7AAAIoAoABADUMDoBwAHy4GT4IymBDhCgvPLgaCbI+lIW+lQUzBLMzCH6As+EEhLOFMsfIs8Uye1UyM+FCPpSWPoCcM8Laslx+wD4ksjPhQj6UnDPC27JgED7AND6SNQx1DHRyM+FCPpScM8LbsmBAKD7AAL0idcnjmAwOgHy0GT4kifHBfLgZfiXghAR4aMAvvLgZybI+lIW+lQUzBLMzCH6As+EDhLOFMsfIs8Uye1UyM+FCPpSWPoCcM8Laslx+wDQ+kjUMdQx0cjPhQj6UnDPC27JgQCg+wDgMdcsJQBQACwx4wJfCYQPAccA8vQICQAIoAoAAwHWOcAB8uBk+JIVxwXy4Gb4l4IQC+vCAL7y4GdtBtD6SNTUMdGIAsj6UszMyQXI+lIW+lQSzMwTzFj6As+EAhLOz5AAAAACIc8Uye1UghAR4aMAAdD6SNQx1DHRyM+FCPpSAfoCcM8Laslx+wAKAAAALbjQrtRND6SDH6UDH6ADHXCwcgwgTyRYADu5g37UTQ+kj6UNTU1PoA0wchwgTyRdM/0x/TH9dMg=');
 
     static Errors = {
         'OrderErrors.WrongStatus': 100,
@@ -498,6 +503,7 @@ export class Order implements c.Contract {
         courier: c.Address | null
         description: c.Cell
         area: c.Cell
+        origin: c.Cell
         reward: coins
         status: OrderStatus
         nonce: uint64
@@ -594,7 +600,7 @@ export class Order implements c.Contract {
     }
 
     async getOrderData(provider: ContractProvider): Promise<OrderStorage> {
-        const r = StackReader.fromGetMethod(10, await provider.get('orderData', []));
+        const r = StackReader.fromGetMethod(11, await provider.get('orderData', []));
         return ({
             $: 'OrderStorage',
             sender: r.readSlice().loadAddress(),
@@ -603,6 +609,7 @@ export class Order implements c.Contract {
             ),
             description: r.readCell(),
             area: r.readCell(),
+            origin: r.readCell(),
             reward: r.readBigInt(),
             status: r.readBigInt(),
             nonce: r.readBigInt(),

@@ -14,15 +14,28 @@ const DEADLINE = 60 * 60 // 1 hour, in seconds
 // also rejects grossly under-funded direct callers that bypass the UI.
 const MIN_ACCEPT_FEE = ton("0.1")
 
+// Extra service fee the sender pays to CANCEL an order they created while it is
+// still Open. It is on top of the 0.1 TON create fee they already paid: the
+// create fee stays with the platform and this 0.3 is added, so a cancel earns the
+// platform ~0.4 TON in total. The reward is always returned to the sender in full.
+const CANCEL_FEE = ton("0.3")
+
+// Extra service fee the courier pays to RELEASE (give up) an order they already
+// accepted. It is on top of the 0.1 TON accept fee they already paid: the accept
+// fee is NO LONGER refunded and this 0.2 is added, so a release earns the platform
+// ~0.3 TON in total. The reward and the sender's create fee stay on the contract
+// for the next courier (the order reopens, it does not close).
+const RELEASE_FEE = ton("0.2")
+
 // One delivery order: an escrow plus a small state machine.
 //   Open --AcceptOrder(courier, +0.1 fee)--> Accepted
 //        --ConfirmDelivery(sender, +0.05 gas)--> Completed  (reward -> courier, sender's change back, ~0.2 buffer -> owner, self-destruct)
 //        --ClaimExpired(anyone, after deadline)--> Expired  (reward -> sender, caller's change back, ~0.2 buffer -> owner, courier gets nothing, self-destruct)
-//        --CourierRelease(courier)--> Open         (order reopens for another courier; the courier gets their full 0.1 accept fee back plus their release-gas change, reward + sender's create fee stay on the contract)
-//   Open --CancelOrder(sender)--> Cancelled       (reward -> sender, sender's change back, ~0.1 fee -> owner, self-destruct)
+//        --CourierRelease(courier, +0.2 fee)--> Open         (order reopens for another courier; the accept fee is kept and the 0.2 release fee is added, so ~0.3 -> owner; reward + sender's create fee stay on the contract; courier gets nothing back)
+//   Open --CancelOrder(sender, +0.3 fee)--> Cancelled       (reward -> sender; the create fee is kept and the 0.3 cancel fee is added, so ~0.4 -> owner, self-destruct)
 contract Order {
     author: "SwiftDelivery"
-    version: "1.12.0"
+    version: "1.13.0"
     description: "A single delivery order with escrow"
     storage: OrderStorage
     incomingMessages: OrderMessage
@@ -130,35 +143,36 @@ fun onInternalMessage(in: InMessage) {
         CancelOrder => {
             assert (s.status == OrderStatus.Open) throw OrderErrors.WrongStatus;
             assert (s.sender == in.senderAddress) throw OrderErrors.NotSender;
+            // Cancelling now costs a flat 0.3 TON service fee, on top of the 0.1 TON
+            // the sender already paid at create time. Reject a caller who did not
+            // attach it so the platform always earns the cancel fee (and a direct
+            // caller cannot cancel for free, bypassing the UI).
+            assert (in.valueCoins >= CANCEL_FEE) throw OrderErrors.FeeTooLow;
             s.status = OrderStatus.Cancelled;
             s.save();
-            // Both the reward refund and the gas change go to the SAME address
-            // (the sender), so send them as ONE payment instead of two. Mode 64
-            // (carry all remaining message value) adds the unused part of THIS
-            // message's value — the change from the ~0.05 gas the sender attached
-            // to cancel — on top of the `value` we set here, so the sender
-            // receives `reward + change` in a single transfer. The forwarding fee
-            // comes out of that combined value, so cancelling costs the sender
-            // only the tx fee on top of the create fee they forfeit.
+            // 1. Return the reward to the sender — EXACTLY the reward, with the
+            //    forwarding fee taken from the contract balance (PAY_FEES_SEPARATELY).
+            //    We do NOT carry the message value back this time: the 0.3 TON the
+            //    sender attached is the cancel fee and must stay for the platform,
+            //    so it is not refunded as change.
             val refund = createMessage({
                 bounce: BounceMode.NoBounce,
                 value: s.reward,
                 dest: s.sender,
             });
-            refund.send(SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE);
-            // Everything left over (the ~0.1 TON the sender added at create time,
-            // minus gas) is the platform's cancellation fee; send it to the owner
-            // and self-destruct. NOTE: no courier has accepted yet (status was
-            // Open), so there is no courier fee here — only the sender's create
-            // fee, hence ~0.1, not the ~0.2 of a completed order.
+            refund.send(SEND_MODE_PAY_FEES_SEPARATELY);
+            // 2. Everything left over goes to the platform owner and the contract
+            //    self-destructs. That leftover is the 0.1 TON create fee the order
+            //    already held PLUS the 0.3 TON cancel fee just attached, so the
+            //    platform earns ~0.4 TON on a cancel.
             val fee = createMessage({
                 bounce: BounceMode.NoBounce,
                 value: 0 as coins,
                 dest: s.extra.load().owner,
             });
-            // SAFETY: terminal state. The reward and the sender's change already
-            // left above; the rest is the platform's cancellation fee. Draining it
-            // and destroying the contract is the intended cancel path.
+            // SAFETY: terminal state. The reward already left above; the rest is the
+            // platform's cancellation fee (create fee + cancel fee). Draining it and
+            // destroying the contract is the intended cancel path.
             fee.send(SEND_MODE_CARRY_ALL_BALANCE | SEND_MODE_DESTROY);
         }
         CourierRelease => {
@@ -167,6 +181,10 @@ fun onInternalMessage(in: InMessage) {
             assert (s.status == OrderStatus.Accepted) throw OrderErrors.WrongStatus;
             // status Accepted guarantees courier is set, so `!` is safe here.
             assert (s.courier! == in.senderAddress) throw OrderErrors.NotCourier;
+            // Giving up an accepted order now costs a flat 0.2 TON service fee, on
+            // top of the 0.1 TON accept fee the courier already paid (which is NO
+            // longer refunded). Reject a caller who did not attach it.
+            assert (in.valueCoins >= RELEASE_FEE) throw OrderErrors.FeeTooLow;
             // The order does NOT close — it reopens so another courier can take
             // it. Reset it to exactly the Open shape it had before this courier
             // accepted: clear the courier, the accept time, and their contact.
@@ -177,26 +195,21 @@ fun onInternalMessage(in: InMessage) {
             extra.courierContact = createEmptyCell();
             s.extra = extra.toCell();
             s.save();
-            // The order reopens, so the courier is made whole. Their accept-fee
-            // refund and their gas change go to the SAME address (the courier), so
-            // send them as ONE payment instead of two. We set `value` to the full
-            // 0.1 TON accept fee and use mode 64 (carry all remaining message
-            // value), which adds the unused part of THIS message's value — the
-            // change from the ~0.05 gas the courier attached to release — on top,
-            // so the courier receives `accept fee + change` in a single transfer.
-            // Status was Accepted, so the contract holds exactly one accept fee
-            // (MIN_ACCEPT_FEE); refunding that fixed amount returns the balance to
-            // its pre-accept size (reward + the sender's create fee), so the
-            // platform still earns its ~0.2 at the end no matter how many couriers
-            // accept and release before one finally delivers. The reward and the
-            // sender's create fee stay on the contract for the next courier;
-            // nothing goes to the owner here, the order is not closing.
-            val feeRefund = createMessage({
+            // The courier is NOT made whole any more. The platform keeps the 0.1
+            // TON accept fee the contract already held AND the 0.2 TON release fee
+            // just attached, so it earns ~0.3 TON on a release. Send that fixed
+            // 0.3 to the owner (PAY_FEES_SEPARATELY, fee from balance) and keep the
+            // rest. Before this message the contract held reward + 0.1 (create) +
+            // 0.1 (accept) and the courier added 0.2, so after sending 0.3 out the
+            // balance is back to reward + 0.1 (the create fee) — exactly a fresh
+            // Open order's funding, ready for the next courier. The order is not
+            // closing, so the contract is NOT destroyed.
+            val fee = createMessage({
                 bounce: BounceMode.NoBounce,
-                value: MIN_ACCEPT_FEE,
-                dest: in.senderAddress,
+                value: MIN_ACCEPT_FEE + RELEASE_FEE,
+                dest: s.extra.load().owner,
             });
-            feeRefund.send(SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE);
+            fee.send(SEND_MODE_PAY_FEES_SEPARATELY);
         }
         else => {
             // Empty body (e.g. the deploy message) is accepted as a no-op.

@@ -18,7 +18,7 @@ const CREATE_MIN_BUFFER = ton("0.05")
 
 contract Marketplace {
     author: "SwiftDelivery"
-    version: "1.7.0"
+    version: "1.8.0"
     description: "Registry that deploys Order escrow contracts"
     storage: MarketplaceStorage
     incomingMessages: MarketplaceMessage
@@ -47,6 +47,7 @@ fun onInternalMessage(in: InMessage) {
                 courier: null,
                 description: msg.description,
                 area: msg.area,
+                origin: msg.origin,
                 reward: msg.reward,
                 status: OrderStatus.Open,
                 nonce: msg.nonce,
@@ -100,6 +101,7 @@ get fun orderAddress(
     createdAt: uint32,
     description: cell,
     area: cell,
+    origin: cell,
     senderContact: cell,
 ): address {
     val st = lazy MarketplaceStorage.load();
@@ -108,6 +110,7 @@ get fun orderAddress(
         courier: null,
         description,
         area,
+        origin,
         reward,
         status: OrderStatus.Open,
         nonce,

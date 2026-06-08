@@ -21,6 +21,7 @@ get fun `test create order deploys an open order and holds the escrow`() {
         createEmptyCell(),
         createEmptyCell(),
         createEmptyCell(),
+        createEmptyCell(),
         { value: ton("2.2") },
     );
     expect(res).toHaveSuccessfulTx<CreateOrder>({ from: sender.address, to: market.address });
@@ -34,6 +35,7 @@ get fun `test create order deploys an open order and holds the escrow`() {
         ton("2"),
         NONCE,
         CREATED_AT,
+        createEmptyCell(),
         createEmptyCell(),
         createEmptyCell(),
         createEmptyCell(),
@@ -60,6 +62,7 @@ get fun `test order created via marketplace can complete and pay the courier`() 
         createEmptyCell(),
         createEmptyCell(),
         createEmptyCell(),
+        createEmptyCell(),
         { value: ton("2.2") },
     );
 
@@ -68,6 +71,7 @@ get fun `test order created via marketplace can complete and pay the courier`() 
         ton("2"),
         NONCE,
         CREATED_AT,
+        createEmptyCell(),
         createEmptyCell(),
         createEmptyCell(),
         createEmptyCell(),
@@ -102,6 +106,7 @@ get fun `test create rejects an order that does not cover the reward`() {
         createEmptyCell(),
         createEmptyCell(),
         createEmptyCell(),
+        createEmptyCell(),
         { value: ton("0.2") },
     );
     expect(r).toHaveFailedTx({
@@ -117,6 +122,7 @@ get fun `test create rejects an order that does not cover the reward`() {
         ton("2"),
         NONCE,
         CREATED_AT,
+        createEmptyCell(),
         createEmptyCell(),
         createEmptyCell(),
         createEmptyCell(),

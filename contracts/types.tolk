@@ -15,6 +15,7 @@ enum OrderErrors {
     NotCourier = 102 // courier-release attempted by someone other than the courier
     FeeTooLow = 103  // courier attached less than the minimum accept fee
     NotExpired = 104 // claim attempted before the deadline
+    DeadlinePassed = 105 // courier-release attempted after the deadline
     InvalidMessage = 0xFFFF
 }
 
@@ -84,11 +85,13 @@ struct (0xa00a0003) CancelOrder {}
 
 struct (0xa00a0004) ClaimExpired {}
 
-// Courier gives up an order they already accepted. The order does NOT close: it
-// goes back to Open so another courier can take it. The courier is refunded their
-// full 0.1 TON accept fee plus their release-gas change, so backing out costs them
-// only the transaction gas. The reward and the sender's create fee stay on the
-// contract for the next courier.
+// Courier gives up an order they already accepted. Allowed ONLY before the
+// deadline: once the delivery window has passed the courier has no actions left
+// and the order can only be settled by the sender (claim or confirm). The order
+// does NOT close: it goes back to Open so another courier can take it. The courier
+// pays a 0.2 TON release fee on top of the 0.1 TON accept fee they already paid;
+// neither is refunded — both stay on the contract for the platform. The reward and
+// the sender's create fee also stay on the contract for the next courier.
 struct (0xa00a0005) CourierRelease {}
 
 type OrderMessage =

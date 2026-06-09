@@ -7,11 +7,11 @@ const DEADLINE = 60 * 60 // 1 hour, in seconds
 
 // Lowest value a courier must attach to accept. There is no courier stake any
 // more: the courier pays a flat 0.1 TON service fee (from the UI) that stays on
-// the contract and, together with the 0.1 TON the sender added at create time,
-// makes up the ~0.2 TON the platform keeps at the end. If the courier later gives
-// the order up (CourierRelease), this exact fee is refunded to them, so only a
-// courier who actually delivers (or lets the order expire) pays it. This floor
-// also rejects grossly under-funded direct callers that bypass the UI.
+// the contract and is NEVER refunded. Together with the 0.1 TON the sender added
+// at create time it makes up the ~0.2 TON the platform keeps on a simple
+// completed order. All such fees accumulate on the contract balance and are paid
+// out to the owner only when the order reaches a terminal state. This floor also
+// rejects grossly under-funded direct callers that bypass the UI.
 const MIN_ACCEPT_FEE = ton("0.1")
 
 // Extra service fee the sender pays to CANCEL an order they created while it is
@@ -21,21 +21,22 @@ const MIN_ACCEPT_FEE = ton("0.1")
 const CANCEL_FEE = ton("0.3")
 
 // Extra service fee the courier pays to RELEASE (give up) an order they already
-// accepted. It is on top of the 0.1 TON accept fee they already paid: the accept
-// fee is NO LONGER refunded and this 0.2 is added, so a release earns the platform
-// ~0.3 TON in total. The reward and the sender's create fee stay on the contract
-// for the next courier (the order reopens, it does not close).
+// accepted. It is on top of the 0.1 TON accept fee they already paid (which is
+// NOT refunded). Both stay on the contract balance — nothing is sent out on a
+// release — so the platform's eventual earnings grow by ~0.3 TON, collected when
+// the order finally settles. The reward and the sender's create fee also stay on
+// the contract for the next courier (the order reopens, it does not close).
 const RELEASE_FEE = ton("0.2")
 
 // One delivery order: an escrow plus a small state machine.
 //   Open --AcceptOrder(courier, +0.1 fee)--> Accepted
 //        --ConfirmDelivery(sender, +0.05 gas)--> Completed  (reward -> courier, sender's change back, ~0.2 buffer -> owner, self-destruct)
-//        --ClaimExpired(anyone, after deadline)--> Expired  (reward -> sender, caller's change back, ~0.2 buffer -> owner, courier gets nothing, self-destruct)
-//        --CourierRelease(courier, +0.2 fee)--> Open         (order reopens for another courier; the accept fee is kept and the 0.2 release fee is added, so ~0.3 -> owner; reward + sender's create fee stay on the contract; courier gets nothing back)
+//        --ClaimExpired(sender, after deadline)--> Expired  (reward + sender's change in ONE transfer, ~0.2 buffer -> owner, courier gets nothing, self-destruct)
+//        --CourierRelease(courier, +0.2 fee, BEFORE deadline only)--> Open  (order reopens; accept fee + release fee accumulate in contract; owner paid at terminal state only; courier gets nothing back. After the deadline this is rejected — the courier has no actions left.)
 //   Open --CancelOrder(sender, +0.3 fee)--> Cancelled       (reward -> sender; the create fee is kept and the 0.3 cancel fee is added, so ~0.4 -> owner, self-destruct)
 contract Order {
     author: "SwiftDelivery"
-    version: "1.13.0"
+    version: "1.16.0"
     description: "A single delivery order with escrow"
     storage: OrderStorage
     incomingMessages: OrderMessage
@@ -101,34 +102,31 @@ fun onInternalMessage(in: InMessage) {
             fee.send(SEND_MODE_CARRY_ALL_BALANCE | SEND_MODE_DESTROY);
         }
         ClaimExpired => {
-            // After the deadline, anyone may trigger the unwind — a TON contract
-            // cannot fire on a timer by itself, so the app shows a "Claim" button
-            // to whoever opens the order. No sender/courier check on purpose.
+            // After the deadline the order can be unwound — a TON contract cannot
+            // fire on a timer by itself, so the app shows the sender a "Claim"
+            // button. Only the SENDER may claim: the reward returns to them and no
+            // one else has any reason to trigger this. Restricting it to the sender
+            // also means there is a single payee, so the reward and the sender's
+            // gas change merge into ONE transfer (no double payment to one wallet).
             assert (s.status == OrderStatus.Accepted) throw OrderErrors.WrongStatus;
             assert (blockchain.now() > s.acceptedAt + DEADLINE) throw OrderErrors.NotExpired;
+            assert (s.sender == in.senderAddress) throw OrderErrors.NotSender;
             s.status = OrderStatus.Expired;
             s.save();
-            // The courier did not deliver in time, so they get nothing. The
-            // reward returns to the sender (exact amount, fee from balance)...
+            // The courier did not deliver in time, so they get nothing. The reward
+            // returns to the sender in ONE message: value = the reward, and mode 64
+            // carries the unused part of THIS message's value (the sender's change
+            // from the ~0.05 gas they attached) on top. So the sender receives
+            // reward + change as a single transfer and pays only the tx fee — the
+            // same merge CancelOrder uses, no two-messages-to-one-wallet problem.
             val refund = createMessage({
                 bounce: BounceMode.NoBounce,
                 value: s.reward,
                 dest: s.sender,
             });
-            refund.send(SEND_MODE_PAY_FEES_SEPARATELY);
-            // Return the unused part of THIS message's value (the caller's change
-            // from the ~0.05 they attached) back to whoever triggered the claim,
-            // exactly like ConfirmDelivery does for the sender. Mode 64 carries
-            // the leftover of the incoming message, minus this transaction's gas,
-            // so the caller is not charged the full 0.05 — only the tx fee.
-            val change = createMessage({
-                bounce: BounceMode.NoBounce,
-                value: 0 as coins,
-                dest: in.senderAddress,
-            });
-            change.send(SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE);
-            // ...and the whole remaining buffer goes to the platform owner;
-            // contract self-destructs.
+            refund.send(SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE);
+            // The whole remaining buffer (the accumulated service fees) goes to the
+            // platform owner; contract self-destructs.
             val fee = createMessage({
                 bounce: BounceMode.NoBounce,
                 value: 0 as coins,
@@ -181,6 +179,15 @@ fun onInternalMessage(in: InMessage) {
             assert (s.status == OrderStatus.Accepted) throw OrderErrors.WrongStatus;
             // status Accepted guarantees courier is set, so `!` is safe here.
             assert (s.courier! == in.senderAddress) throw OrderErrors.NotCourier;
+            // A courier may give up ONLY before the deadline. Once the delivery
+            // window has passed there is no point reopening an order that is a month
+            // (or more) stale — a new courier has nothing left to deliver — so after
+            // the deadline the courier has no actions at all and the order can only
+            // be settled by the sender (ClaimExpired or ConfirmDelivery). This guard
+            // is the exact mirror of ClaimExpired's `now > acceptedAt + DEADLINE`:
+            // up to and including the deadline only release is possible; strictly
+            // after it only claim is, so the two can never race.
+            assert (blockchain.now() <= s.acceptedAt + DEADLINE) throw OrderErrors.DeadlinePassed;
             // Giving up an accepted order now costs a flat 0.2 TON service fee, on
             // top of the 0.1 TON accept fee the courier already paid (which is NO
             // longer refunded). Reject a caller who did not attach it.
@@ -195,21 +202,11 @@ fun onInternalMessage(in: InMessage) {
             extra.courierContact = createEmptyCell();
             s.extra = extra.toCell();
             s.save();
-            // The courier is NOT made whole any more. The platform keeps the 0.1
-            // TON accept fee the contract already held AND the 0.2 TON release fee
-            // just attached, so it earns ~0.3 TON on a release. Send that fixed
-            // 0.3 to the owner (PAY_FEES_SEPARATELY, fee from balance) and keep the
-            // rest. Before this message the contract held reward + 0.1 (create) +
-            // 0.1 (accept) and the courier added 0.2, so after sending 0.3 out the
-            // balance is back to reward + 0.1 (the create fee) — exactly a fresh
-            // Open order's funding, ready for the next courier. The order is not
-            // closing, so the contract is NOT destroyed.
-            val fee = createMessage({
-                bounce: BounceMode.NoBounce,
-                value: MIN_ACCEPT_FEE + RELEASE_FEE,
-                dest: s.extra.load().owner,
-            });
-            fee.send(SEND_MODE_PAY_FEES_SEPARATELY);
+            // All service fees accumulate in the contract balance. The 0.1 accept
+            // fee already held and the 0.2 release fee just received stay here and
+            // are paid to the owner as part of the final mode-128 transfer when the
+            // order reaches a terminal state (ConfirmDelivery, CancelOrder, or
+            // ClaimExpired). No outgoing message is sent here.
         }
         else => {
             // Empty body (e.g. the deploy message) is accepted as a no-op.

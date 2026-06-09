@@ -130,7 +130,7 @@ get fun `test accept with a large reward does not overflow`() {
     expect(order.status()).toEqual(OrderStatus.Accepted);
 }
 
-// ---- claim after the deadline: reward -> sender, buffer -> platform, courier nothing ----
+// ---- claim after the deadline: reward + change -> sender (one transfer), buffer -> platform, courier nothing ----
 
 get fun `test claim after deadline refunds sender and pays platform`() {
     val (order, sender, courier, owner) = setupOrderTest();
@@ -141,12 +141,10 @@ get fun `test claim after deadline refunds sender and pays platform`() {
     val senderMid = testing.getAccountBalance(sender.address);
     val ownerMid = testing.getAccountBalance(owner.address);
 
-    // Jump past the deadline. Anyone may claim — use a stranger.
+    // Jump past the deadline. Only the sender may claim.
     testing.setNow(BASE_TIME + DEADLINE + 1);
-    val stranger = testing.treasury("stranger");
-    val strangerMid = testing.getAccountBalance(stranger.address);
-    val r = order.sendClaimExpired(stranger.address, { value: GAS });
-    expect(r).toHaveSuccessfulTx<ClaimExpired>({ from: stranger.address, to: order.address });
+    val r = order.sendClaimExpired(sender.address, { value: GAS });
+    expect(r).toHaveSuccessfulTx<ClaimExpired>({ from: sender.address, to: order.address });
 
     // Contract destroyed.
     expect(testing.getAccountBalance(order.address)).toBeLess(ton("0.001"));
@@ -154,20 +152,39 @@ get fun `test claim after deadline refunds sender and pays platform`() {
     // The courier did not deliver in time, so they get nothing.
     expect(testing.getAccountBalance(courier.address) - courierMid).toEqual(0 as coins);
 
-    // Sender got exactly the reward back (tolerate emulator fwd_fee).
+    // The sender got the reward AND the change of their GAS back in ONE merged
+    // transfer (value = reward + mode 64). So their net gain is the full reward
+    // PLUS most of the GAS they attached — clearly above the reward alone, which
+    // is what proves the change rode along instead of arriving as a second
+    // message. It stays under reward + GAS, so the fee buffer did NOT leak to the
+    // sender (it must go to the owner below).
     val senderGain = testing.getAccountBalance(sender.address) - senderMid;
     expect(senderGain).toBeGreater(REWARD - ton("0.01"));
-    expect(senderGain).toBeLess(REWARD + ton("0.01"));
-
-    // The caller got the change of their GAS back (mode 64), so the claim costs
-    // them only the tx fee — far less than the full GAS they sent. Without the
-    // refund, strangerGain would be about -GAS (-0.05) and this would fail.
-    val strangerGain = testing.getAccountBalance(stranger.address) - strangerMid;
-    expect(strangerGain).toBeGreater(-ton("0.03"));
+    expect(senderGain).toBeLess(REWARD + GAS);
 
     // Platform got the remaining buffer (the ~0.2 TON), NOT a dust amount: this
-    // proves the buffer went to the platform and the caller's change did not.
+    // proves the buffer went to the platform and not back to the sender.
     expect(testing.getAccountBalance(owner.address) - ownerMid).toBeGreater(ton("0.2"));
+}
+
+// ---- claim is sender-only: a stranger past the deadline is rejected ----
+
+get fun `test only the sender can claim an expired order`() {
+    val (order, _, courier, _) = setupOrderTest();
+    testing.setNow(BASE_TIME);
+    order.sendAcceptOrder(courier.address, createEmptyCell(), { value: ACCEPT_FEE });
+
+    // Past the deadline, but the caller is not the sender.
+    testing.setNow(BASE_TIME + DEADLINE + 1);
+    val stranger = testing.treasury("stranger");
+    val r = order.sendClaimExpired(stranger.address, { value: GAS });
+    expect(r).toHaveFailedTx({
+        from: stranger.address,
+        to: order.address,
+        exitCode: OrderErrors.NotSender,
+    });
+    // The order is untouched and the contract still exists.
+    expect(order.status()).toEqual(OrderStatus.Accepted);
 }
 
 get fun `test cannot claim before the deadline`() {
@@ -303,23 +320,17 @@ get fun `test courier release reopens the order and charges the release fee`() {
     expect(testing.getAccountBalance(order.address)).toBeGreater(REWARD);
     expect(testing.getAccountBalance(sender.address)).toEqual(senderMid);
 
-    // The platform now earns ~0.3 TON on a release: the 0.1 accept fee the contract
-    // already held (no longer refunded) plus the 0.2 release fee just attached.
+    // Fees accumulate in the contract — owner receives nothing during a release.
     val ownerGain = testing.getAccountBalance(owner.address) - ownerMid;
-    expect(ownerGain).toBeGreater(ton("0.25"));
-    expect(ownerGain).toBeLess(ton("0.35"));
+    expect(ownerGain).toBeLess(ton("0.01"));
 
-    // The courier is NOT made whole any more: they get nothing back (no accept-fee
-    // refund), unlike the old behaviour where they received ~0.1. Treasuries only
-    // track received funds, so courierGain ≈ 0 here (and is certainly not positive).
+    // Courier received nothing back. Treasuries only track received funds,
+    // so courierGain == 0 even though the courier sent 0.2 TON.
     val courierGain = testing.getAccountBalance(courier.address) - courierMid;
-    expect(courierGain).toBeLess(ton("0.02"));
-    expect(courierGain).toBeGreater(-ton("0.02"));
+    expect(courierGain).toBeLess(ton("0.01"));
 
-    // The contract balance is back to a fresh Open order's funding: the 0.2 fee
-    // came in and 0.3 went to the owner, so it dropped by ~0.1 (the accept fee)
-    // from the accepted state captured in orderMid.
-    expect(orderMid - testing.getAccountBalance(order.address)).toBeGreater(ton("0.05"));
+    // The contract balance grew: 0.2 came in and nothing went out.
+    expect(testing.getAccountBalance(order.address)).toBeGreater(orderMid + ton("0.1"));
 
     // A different courier can now take the reopened order.
     val courier2 = testing.treasury("courier2");
@@ -327,6 +338,26 @@ get fun `test courier release reopens the order and charges the release fee`() {
     expect(r2).toHaveSuccessfulTx<AcceptOrder>({ from: courier2.address, to: order.address });
     expect(order.status()).toEqual(OrderStatus.Accepted);
     expect(order.orderData().courier!).toEqual(courier2.address);
+}
+
+// ---- release is blocked after the deadline: only the sender may act then ----
+get fun `test cannot release after the deadline`() {
+    val (order, _, courier, _) = setupOrderTest();
+    testing.setNow(BASE_TIME);
+    order.sendAcceptOrder(courier.address, createEmptyCell(), { value: ACCEPT_FEE });
+    expect(order.status()).toEqual(OrderStatus.Accepted);
+
+    // Jump past the deadline. The courier now has no actions left — a release is
+    // rejected, so the order can only be settled by the sender (claim or confirm).
+    testing.setNow(BASE_TIME + DEADLINE + 1);
+    val r = order.sendCourierRelease(courier.address, { value: RELEASE_FEE });
+    expect(r).toHaveFailedTx({
+        from: courier.address,
+        to: order.address,
+        exitCode: OrderErrors.DeadlinePassed,
+    });
+    // The order is untouched: still Accepted by the same courier.
+    expect(order.status()).toEqual(OrderStatus.Accepted);
 }
 
 get fun `test non-courier cannot release`() {

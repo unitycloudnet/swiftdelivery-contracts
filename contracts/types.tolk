@@ -39,10 +39,12 @@ struct OrderExtra {
 
 // One delivery order. Holds the escrow and the state machine.
 // `description`, `area` and `origin` are cells (text packed by the caller).
-// Both cities are public; the exact street address is NEVER stored on-chain.
+// Both are public; the exact street address is NEVER stored on-chain.
 //   `area`   — the "to" city (destination).
-//   `origin` — the "from" city (where the parcel starts). The UI defaults this
-//              to "All world" when the sender does not care about the origin.
+//   `origin` — the "from" place (where the parcel starts). It is free text and
+//              need NOT be a city: it can be a shop, a landmark, an airport zone
+//              ("Duty Free", "H&M", "McDonald's"). The UI defaults this to
+//              "All world" when the sender does not care about the origin.
 //
 // All fields here are supplied by the creator (the frontend), NOT by block
 // time or a global counter. That is on purpose: a contract's address is the
@@ -54,7 +56,7 @@ struct OrderStorage {
     courier: address?  // null until a courier accepts
     description: cell
     area: cell         // "to" city (destination)
-    origin: cell       // "from" city (source); "All world" = any origin
+    origin: cell       // "from" place (source, any text); "All world" = any origin
     reward: coins
     status: OrderStatus
     nonce: uint64      // client random, for a unique address
@@ -131,7 +133,7 @@ struct (0xa00a0000) CreateOrder {
     createdAt: uint32   // client unix time, for display
     description: cell
     area: cell          // "to" city (destination)
-    origin: cell        // "from" city (source); "All world" = any origin
+    origin: cell        // "from" place (source, any text); "All world" = any origin
     senderContact: cell // sender's Telegram contact (opaque text)
 }
 

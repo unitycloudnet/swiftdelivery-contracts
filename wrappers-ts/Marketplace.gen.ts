@@ -117,6 +117,7 @@ type coins = bigint
 
 type uint32 = bigint
 type uint64 = bigint
+type uint256 = bigint
 
 /**
  > struct MarketplaceStorage {
@@ -170,6 +171,7 @@ export const MarketplaceStorage = {
  >     area: cell
  >     origin: cell
  >     senderContact: cell
+ >     secretHash: uint256
  > }
  */
 export interface CreateOrder {
@@ -181,6 +183,7 @@ export interface CreateOrder {
     area: c.Cell
     origin: c.Cell
     senderContact: c.Cell
+    secretHash: uint256
 }
 
 export const CreateOrder = {
@@ -194,6 +197,7 @@ export const CreateOrder = {
         area: c.Cell
         origin: c.Cell
         senderContact: c.Cell
+        secretHash: uint256
     }): CreateOrder {
         return {
             $: 'CreateOrder',
@@ -211,6 +215,7 @@ export const CreateOrder = {
             area: s.loadRef(),
             origin: s.loadRef(),
             senderContact: s.loadRef(),
+            secretHash: s.loadUintBig(256),
         }
     },
     store(self: CreateOrder, b: c.Builder): void {
@@ -222,6 +227,7 @@ export const CreateOrder = {
         b.storeRef(self.area);
         b.storeRef(self.origin);
         b.storeRef(self.senderContact);
+        b.storeUint(self.secretHash, 256);
     },
     toCell(self: CreateOrder): c.Cell {
         return makeCellFrom<CreateOrder>(self, CreateOrder.store);
@@ -284,7 +290,7 @@ function calculateDeployedAddress(code: c.Cell, data: c.Cell, options: DeployedA
 }
 
 export class Marketplace implements c.Contract {
-    static CodeCell = c.Cell.fromBase64('te6ccgECCgEAAR8AART/APSkE/S88sgLAQIBYgIDAUbQ+JGRMOAg7UTQ+kjU1wsfA9csJQBQAATjAl8EhA8BxwDy9AQCASAFBgHoNAP6ANM/0x/U1NTXTPiXJ4IK+vCAoL7y4MgIpCfI+lIqzxTLH8ntVPiSbYgJyPpSGswYzMkHyPpSGPpUEszMFcxY+gLPhALLPxLLH8+QAAAAAszJyM+JCAFTEsjPhNDMzPkWzwv/gQCMzwt0EszMyYBA+wAJABG+KO9qJofSQYQCAUgHCAGPtbq9qJofSRrpjbEAeR9KQpmCWZkhOR9KQl9KgpmCWZmKAJ9AWfCAQlln+WP58gAAAABCWZkgORnwmhmZnyLZGfFACBl/+eoQCQAXtDzdqJofSQY64WPwAAA=');
+    static CodeCell = c.Cell.fromBase64('te6ccgECCgEAAScAART/APSkE/S88sgLAQIBYgIDAUbQ+JGRMOAg7UTQ+kjU1wsfA9csJQBQAATjAl8EhA8BxwDy9AQCASAFBgHyNAP6ANM/0x/U1NTU1wv/+Jcoggr68ICgvvLgyAmkKMj6UivPFMsfye1U+JJtiArI+lITzBnMGcv/yQfI+lIY+lQSzMwVzFj6As+EAss/Essfz5AAAAACzMnIz4kIAVMSyM+E0MzM+RbPC/+BAIzPC3QSzMzJgED7AAkAEb4o72omh9JBhAIBSAcIAZW1ur2omh9JGumNsQB5H0pCuYJZgll/+SE5H0pCX0qCmYJZmYoAn0BZ8IBCWWf5Y/nyAAAAAEJZmSA5GfCaGZmfItkZ8UAIGX/56hAJABe0PN2omh9JBjrhY/AAAA==');
 
     static Errors = {
         'MarketplaceErrors.InsufficientValue': 200,
@@ -346,7 +352,7 @@ export class Marketplace implements c.Contract {
         return r.readSlice().loadAddress();
     }
 
-    async getOrderAddress(provider: ContractProvider, sender: c.Address, reward: coins, nonce: uint64, createdAt: uint32, description: c.Cell, area: c.Cell, origin: c.Cell, senderContact: c.Cell): Promise<c.Address> {
+    async getOrderAddress(provider: ContractProvider, sender: c.Address, reward: coins, nonce: uint64, createdAt: uint32, description: c.Cell, area: c.Cell, origin: c.Cell, senderContact: c.Cell, secretHash: uint256): Promise<c.Address> {
         const r = StackReader.fromGetMethod(1, await provider.get('orderAddress', [
             { type: 'slice', cell: makeCellFrom<c.Address>(sender,
                 (v,b) => b.storeAddress(v)
@@ -358,6 +364,7 @@ export class Marketplace implements c.Contract {
             { type: 'cell', cell: area },
             { type: 'cell', cell: origin },
             { type: 'cell', cell: senderContact },
+            { type: 'int', value: secretHash },
         ]));
         return r.readSlice().loadAddress();
     }

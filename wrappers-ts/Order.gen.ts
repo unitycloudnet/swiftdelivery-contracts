@@ -129,6 +129,7 @@ type coins = bigint
 
 type uint32 = bigint
 type uint64 = bigint
+type uint256 = bigint
 
 /**
  > enum OrderStatus { 5 variants }
@@ -158,6 +159,7 @@ export const OrderStatus = {
  >     owner: address
  >     senderContact: cell
  >     courierContact: cell
+ >     secretHash: uint256
  > }
  */
 export interface OrderExtra {
@@ -165,6 +167,7 @@ export interface OrderExtra {
     owner: c.Address
     senderContact: c.Cell
     courierContact: c.Cell
+    secretHash: uint256
 }
 
 export const OrderExtra = {
@@ -172,6 +175,7 @@ export const OrderExtra = {
         owner: c.Address
         senderContact: c.Cell
         courierContact: c.Cell
+        secretHash: uint256
     }): OrderExtra {
         return {
             $: 'OrderExtra',
@@ -184,12 +188,14 @@ export const OrderExtra = {
             owner: s.loadAddress(),
             senderContact: s.loadRef(),
             courierContact: s.loadRef(),
+            secretHash: s.loadUintBig(256),
         }
     },
     store(self: OrderExtra, b: c.Builder): void {
         b.storeAddress(self.owner);
         b.storeRef(self.senderContact);
         b.storeRef(self.courierContact);
+        b.storeUint(self.secretHash, 256);
     },
     toCell(self: OrderExtra): c.Cell {
         return makeCellFrom<OrderExtra>(self, OrderExtra.store);
@@ -317,32 +323,39 @@ export const AcceptOrder = {
 }
 
 /**
- > struct (0xa00a0002) ConfirmDelivery {
+ > struct (0xa00a0002) ConfirmWithCode {
+ >     secret: uint256
  > }
  */
-export interface ConfirmDelivery {
-    readonly $: 'ConfirmDelivery'
+export interface ConfirmWithCode {
+    readonly $: 'ConfirmWithCode'
+    secret: uint256
 }
 
-export const ConfirmDelivery = {
+export const ConfirmWithCode = {
     PREFIX: 0xa00a0002,
 
-    create(): ConfirmDelivery {
+    create(args: {
+        secret: uint256
+    }): ConfirmWithCode {
         return {
-            $: 'ConfirmDelivery',
+            $: 'ConfirmWithCode',
+            ...args
         }
     },
-    fromSlice(s: c.Slice): ConfirmDelivery {
-        loadAndCheckPrefix32(s, 0xa00a0002, 'ConfirmDelivery');
+    fromSlice(s: c.Slice): ConfirmWithCode {
+        loadAndCheckPrefix32(s, 0xa00a0002, 'ConfirmWithCode');
         return {
-            $: 'ConfirmDelivery',
+            $: 'ConfirmWithCode',
+            secret: s.loadUintBig(256),
         }
     },
-    store(self: ConfirmDelivery, b: c.Builder): void {
+    store(self: ConfirmWithCode, b: c.Builder): void {
         b.storeUint(0xa00a0002, 32);
+        b.storeUint(self.secret, 256);
     },
-    toCell(self: ConfirmDelivery): c.Cell {
-        return makeCellFrom<ConfirmDelivery>(self, ConfirmDelivery.store);
+    toCell(self: ConfirmWithCode): c.Cell {
+        return makeCellFrom<ConfirmWithCode>(self, ConfirmWithCode.store);
     }
 }
 
@@ -475,7 +488,7 @@ function calculateDeployedAddress(code: c.Cell, data: c.Cell, options: DeployedA
 }
 
 export class Order implements c.Contract {
-    static CodeCell = c.Cell.fromBase64('te6ccgECDQEAAoQAART/APSkE/S88sgLAQIBYgIDBPjQ+JGRMOAg7UTQ+kj6UNTU1PoA0wchwgTyRdZf0x/XTArXLCUAUAAMjkMxNzny0GT4l4IQBfXhAL7y4Gf4kvgjCND6SNTUMdEH10wByPpSF8wWzMkGyPpSFfpUE8zMzAH6As+EBhPOyx/Mye1U4NcsJQBQABTjAonXJ+MCBAUGBwIBWAsMANAwOgHAAfLgZPiSJ8cF8uBlJsj6UlJg+lQVzBPMzCH6As+EChLOFcsfI88Uye1UyM+FCPpSUAP6AnDPC2rJcfsAyM+FCBL6UnDPC27JgED7AND6SNQx1DHRyM+FCPpScM8LbsmBAKD7AAAIoAoABADEMDoBwAHy4GT4IymBDhCgvPLgaPiSJ8cF8uBlJsj6Uhb6VBTMEszMIfoCz4QSEs4Uyx8izxTJ7VTIz4UI+lJY+gJwzwtqyYBA+wDQ+kjUMdQx0cjPhQj6UnDPC27JgQCg+wAC8onXJ45gMDoB8tBk+JInxwXy4GX4l4IQEeGjAL7y4GcmyPpSFvpUFMwSzMwh+gLPhA4SzhTLHyLPFMntVMjPhQj6Ulj6AnDPC2rJcfsA0PpI1DHUMdHIz4UI+lJwzwtuyYEAoPsA4NcsJQBQACwx4wJfCoQPAccA8vQICQAIoAoAAwGsOgHAAfLgZPiSFscF8uBm+CMIgQ4QoBi78uBp+JeCEAvrwgC+8uBnbQbQ+kjU1DHRiALI+lLMzMkFyPpSFvpUEszME8xQA/oCz4QCzs+QAAAAAszJ7VQKAAAALbjQrtRND6SDH6UDH6ADHXCwcgwgTyRYADu5g37UTQ+kj6UNTU1PoA0wchwgTyRdM/0x/TH9dMg=');
+    static CodeCell = c.Cell.fromBase64('te6ccgECDQEAApsAART/APSkE/S88sgLAQIBYgIDA/bQ+JGRMOAg7UTQ+kj6UNTU1PoA0wchwgTyRdZf0x/XTArXLCUAUAAMjkYxNzny0GT4l4IQBfXhAL7y4Gf4kvgjCND6SNTUMdP/0QjXTALI+lLMzBbL/8kGyPpSFfpUE8zMzAH6As+EBhPOyx/Mye1U4NcsJQBQABTjAokEBQYCAVgLDADgOwLAAfLgZCjQ+kjUMdQx0//RC9cL/8jL//kWUAu68uBsB8j6UlJg+lQVzBPMzCH6As+EChTOyx8TzMntVMjPhQgS+lIB+gJwzwtqyXH7APiSyM+FCPpScM8LbsmAQPsAyM+FCPpScM8LbsmBAKD7AAAIoAoABAP+1yeOZTA6AcAB8uBk+CMpgQ4QoLzy4Gj4kifHBfLgZSbI+lIW+lQUzBLMzCH6As+EEhLOFMsfIs8Uye1UyM+FCPpSWPoCcM8LasmAQPsA0PpI1DHUMdP/MdHIz4UI+lJwzwtuyYEAoPsA4NcsJQBQABzjAtcsJQBQACwx4wJfCgcICQDGMDoB8tBk+JInxwXy4GX4l4IQEeGjAL7y4GcmyPpSFvpUFMwSzMwh+gLPhA4SzhTLHyLPFMntVMjPhQj6Ulj6AnDPC2rJcfsA0PpI1DHUMdP/MdHIz4UI+lJwzwtuyYEAoPsAAbg6AcAB8uBk+JIWxwXy4Gb4IwiBDhCgGLvy4Gn4l4IQC+vCAL7y4GdtBtD6SNTUMdP/0YgDyPpSEswSzMv/yQXI+lIW+lQSzMwTzFAD+gLPhALOz5AAAAACzMntVAoADoQPAccA8vQAAAAtuNCu1E0PpIMfpQMfoAMdcLByDCBPJFgAO7mDftRND6SPpQ1NTU+gDTByHCBPJF0z/TH9Mf10yA==');
 
     static Errors = {
         'OrderErrors.WrongStatus': 100,
@@ -484,6 +497,7 @@ export class Order implements c.Contract {
         'OrderErrors.FeeTooLow': 103,
         'OrderErrors.NotExpired': 104,
         'OrderErrors.DeadlinePassed': 105,
+        'OrderErrors.BadCode': 108,
         'OrderErrors.InvalidMessage': 65535,
     }
 
@@ -526,9 +540,10 @@ export class Order implements c.Contract {
         return AcceptOrder.toCell(AcceptOrder.create(body));
     }
 
-    static createCellOfConfirmDelivery(body: {
+    static createCellOfConfirmWithCode(body: {
+        secret: uint256
     }) {
-        return ConfirmDelivery.toCell(ConfirmDelivery.create());
+        return ConfirmWithCode.toCell(ConfirmWithCode.create(body));
     }
 
     static createCellOfCancelOrder(body: {
@@ -564,11 +579,12 @@ export class Order implements c.Contract {
         });
     }
 
-    async sendConfirmDelivery(provider: ContractProvider, via: Sender, msgValue: coins, body: {
+    async sendConfirmWithCode(provider: ContractProvider, via: Sender, msgValue: coins, body: {
+        secret: uint256
     }, extraOptions?: ExtraSendOptions) {
         return provider.internal(via, {
             value: msgValue,
-            body: ConfirmDelivery.toCell(ConfirmDelivery.create()),
+            body: ConfirmWithCode.toCell(ConfirmWithCode.create(body)),
             ...extraOptions
         });
     }

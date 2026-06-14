@@ -10,6 +10,13 @@ import "@wrappers/Order.gen"
 const NONCE: uint64 = 12345
 const CREATED_AT: uint32 = 1700000000
 
+// Delivery secret and its on-chain commitment (see order.test.tolk). The order is
+// created with this hash so the courier can later confirm with the matching code.
+const SECRET: uint256 = 0xC0DE1234C0DE1234C0DE1234C0DE1234C0DE1234C0DE1234C0DE1234C0DE1234
+fun secretHashOf(secret: uint256): uint256 {
+    return beginCell().storeUint(secret, 256).endCell().hash();
+}
+
 get fun `test create order deploys an open order and holds the escrow`() {
     val (market, sender, _, _) = setupMarketTest();
 
@@ -22,6 +29,7 @@ get fun `test create order deploys an open order and holds the escrow`() {
         createEmptyCell(),
         createEmptyCell(),
         createEmptyCell(),
+        secretHashOf(SECRET),
         { value: ton("2.2") },
     );
     expect(res).toHaveSuccessfulTx<CreateOrder>({ from: sender.address, to: market.address });
@@ -39,6 +47,7 @@ get fun `test create order deploys an open order and holds the escrow`() {
         createEmptyCell(),
         createEmptyCell(),
         createEmptyCell(),
+        secretHashOf(SECRET),
     );
     val order = Order.fromAddress(orderAddr);
     expect(order.status()).toEqual(OrderStatus.Open);
@@ -63,6 +72,7 @@ get fun `test order created via marketplace can complete and pay the courier`() 
         createEmptyCell(),
         createEmptyCell(),
         createEmptyCell(),
+        secretHashOf(SECRET),
         { value: ton("2.2") },
     );
 
@@ -75,16 +85,18 @@ get fun `test order created via marketplace can complete and pay the courier`() 
         createEmptyCell(),
         createEmptyCell(),
         createEmptyCell(),
+        secretHashOf(SECRET),
     );
     val order = Order.fromAddress(orderAddr);
 
     order.sendAcceptOrder(courier.address, createEmptyCell(), { value: ton("0.5") });
 
     val courierBefore = testing.getAccountBalance(courier.address);
-    val r = order.sendConfirmDelivery(sender.address, { value: ton("0.05") });
-    expect(r).toHaveSuccessfulTx<ConfirmDelivery>({ from: sender.address, to: order.address });
+    // The courier confirms by revealing the secret behind the order's secretHash.
+    val r = order.sendConfirmWithCode(courier.address, SECRET, { value: ton("0.05") });
+    expect(r).toHaveSuccessfulTx<ConfirmWithCode>({ from: courier.address, to: order.address });
 
-    // Contract is destroyed after ConfirmDelivery; cannot call order.status() — check
+    // Contract is destroyed after ConfirmWithCode; cannot call order.status() — check
     // balance instead: courier received the reward, contract balance is zero.
     expect(testing.getAccountBalance(order.address)).toBeLess(ton("0.001"));
     expect(testing.getAccountBalance(courier.address)).toBeGreater(courierBefore);
@@ -107,6 +119,7 @@ get fun `test create rejects an order that does not cover the reward`() {
         createEmptyCell(),
         createEmptyCell(),
         createEmptyCell(),
+        secretHashOf(SECRET),
         { value: ton("0.2") },
     );
     expect(r).toHaveFailedTx({
@@ -126,6 +139,7 @@ get fun `test create rejects an order that does not cover the reward`() {
         createEmptyCell(),
         createEmptyCell(),
         createEmptyCell(),
+        secretHashOf(SECRET),
     );
     expect(testing.getAccountBalance(orderAddr)).toEqual(0 as coins);
 }

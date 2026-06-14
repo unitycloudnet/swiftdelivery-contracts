@@ -30,13 +30,22 @@ const RELEASE_FEE = ton("0.2")
 
 // One delivery order: an escrow plus a small state machine.
 //   Open --AcceptOrder(courier, +0.1 fee)--> Accepted
-//        --ConfirmDelivery(sender, +0.05 gas)--> Completed  (reward -> courier, sender's change back, ~0.2 buffer -> owner, self-destruct)
+//        --ConfirmWithCode(anyone with the secret, +0.05 gas)--> Completed  (reward -> courier, caller's change back, ~0.2 buffer -> owner, self-destruct)
 //        --ClaimExpired(sender, after deadline)--> Expired  (reward + sender's change in ONE transfer, ~0.2 buffer -> owner, courier gets nothing, self-destruct)
 //        --CourierRelease(courier, +0.2 fee, BEFORE deadline only)--> Open  (order reopens; accept fee + release fee accumulate in contract; owner paid at terminal state only; courier gets nothing back. After the deadline this is rejected — the courier has no actions left.)
 //   Open --CancelOrder(sender, +0.3 fee)--> Cancelled       (reward -> sender; the create fee is kept and the 0.3 cancel fee is added, so ~0.4 -> owner, self-destruct)
+//
+// Delivery is confirmed by a CODE, not a button: the sender's app picks a 256-bit
+// secret at create time and puts only its hash on-chain (secretHash). The courier
+// learns the secret from the sender at hand-off (a QR code) and reveals it with
+// ConfirmWithCode; the reward is paid only when hash(secret) == secretHash. So the
+// courier is paid ONLY with the sender's code — there is no sender "confirm" button
+// to stall, and a courier with no code cannot be paid (the order expires to the
+// sender). The contract checks an objective math fact (the hash), so neither side's
+// word matters and no arbiter is needed.
 contract Order {
     author: "SwiftDelivery"
-    version: "1.16.0"
+    version: "1.17.0"
     description: "A single delivery order with escrow"
     storage: OrderStorage
     incomingMessages: OrderMessage
@@ -63,9 +72,20 @@ fun onInternalMessage(in: InMessage) {
             s.extra = extra.toCell();
             s.save();
         }
-        ConfirmDelivery => {
+        ConfirmWithCode => {
             assert (s.status == OrderStatus.Accepted) throw OrderErrors.WrongStatus;
-            assert (s.sender == in.senderAddress) throw OrderErrors.NotSender;
+            // Delivery proof: the hash of the revealed secret must match the one
+            // fixed at create time. This hash comparison is the ONLY authorization
+            // — we do NOT check the caller, because the reward is paid to the
+            // courier from storage no matter who sends the message, and in practice
+            // only the sender and (after hand-off) the courier ever know the code.
+            // hash(secret) is the representation hash of a cell holding the 256-bit
+            // secret, which the frontend reproduces with @ton/core (round-trip
+            // covered by a test). The preimage becomes public here, but the order
+            // turns terminal in the same transaction, so a replay is impossible.
+            val extra = s.extra.load();
+            val h = beginCell().storeUint(msg.secret, 256).endCell().hash();
+            assert (h == extra.secretHash) throw OrderErrors.BadCode;
             s.status = OrderStatus.Completed;
             s.save();
             // 1. The reward (the sender's escrow) goes to the courier.
@@ -77,15 +97,15 @@ fun onInternalMessage(in: InMessage) {
                 dest: s.courier!,
             });
             pay.send(SEND_MODE_PAY_FEES_SEPARATELY);
-            // 2. Return the unused part of THIS message's value (the sender's
-            //    change from the ~0.05 gas they attached) back to the sender, so
-            //    the contract balance does not keep growing — the ~0.2 buffer it
-            //    already holds is enough. Mode 64 carries exactly the leftover of
-            //    the incoming message, minus this transaction's gas.
+            // 2. Return the unused part of THIS message's value (the caller's change
+            //    from the ~0.05 gas they attached) back to the caller, so the
+            //    contract balance does not keep growing — the ~0.2 buffer it already
+            //    holds is enough. Mode 64 carries exactly the leftover of the
+            //    incoming message, minus this transaction's gas.
             val change = createMessage({
                 bounce: BounceMode.NoBounce,
                 value: 0 as coins,
-                dest: s.sender,
+                dest: in.senderAddress,
             });
             change.send(SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE);
             // 3. Everything left over (the ~0.2 TON service fee) is the platform's
@@ -93,10 +113,10 @@ fun onInternalMessage(in: InMessage) {
             val fee = createMessage({
                 bounce: BounceMode.NoBounce,
                 value: 0 as coins,
-                dest: s.extra.load().owner,
+                dest: extra.owner,
             });
             // SAFETY: terminal state. The reward already left for the courier and
-            // the sender's change was returned above; only the fee buffer remains,
+            // the caller's change was returned above; only the fee buffer remains,
             // which is the platform's earnings. Draining it and destroying the
             // contract is the intended end of a completed order.
             fee.send(SEND_MODE_CARRY_ALL_BALANCE | SEND_MODE_DESTROY);

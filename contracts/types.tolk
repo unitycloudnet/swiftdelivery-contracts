@@ -16,6 +16,7 @@ enum OrderErrors {
     FeeTooLow = 103  // courier attached less than the minimum accept fee
     NotExpired = 104 // claim attempted before the deadline
     DeadlinePassed = 105 // courier-release attempted after the deadline
+    BadCode = 108 // confirm attempted with a secret whose hash does not match
     InvalidMessage = 0xFFFF
 }
 
@@ -35,6 +36,17 @@ struct OrderExtra {
     // numeric id and first name — never a phone or the exact street address.
     senderContact: cell  // set by the sender at create time
     courierContact: cell // empty until a courier accepts, then their contact
+    // Delivery-code commitment. The sender's app picks a 256-bit random secret at
+    // create time and stores it locally; only this HASH of it goes on-chain. The
+    // courier learns the secret from the sender at hand-off (shown as a QR code)
+    // and sends it with ConfirmWithCode; the contract pays the reward only when
+    // hash(secret) == secretHash. So a courier can be paid ONLY with the sender's
+    // code — there is no "confirm" button the sender could sit on. It lives here
+    // in the referenced extra cell (not the root) to keep the root under 1023 bits
+    // (a 256-bit field in the root risks the same overflow `owner` once caused).
+    // It is part of the init data, so it changes the order's address like
+    // senderContact does — included in CreateOrder and the orderAddress getter.
+    secretHash: uint256
 }
 
 // One delivery order. Holds the escrow and the state machine.
@@ -81,7 +93,13 @@ struct (0xa00a0001) AcceptOrder {
     courierContact: cell // courier's Telegram contact, revealed once accepted
 }
 
-struct (0xa00a0002) ConfirmDelivery {}
+// Confirm a delivery by revealing the secret behind the order's secretHash. The
+// courier scans the sender's QR at hand-off to obtain `secret` and sends it here;
+// the contract pays the courier only if hash(secret) == secretHash (see Order.tolk).
+// Reuses the old ConfirmDelivery opcode (0xa00a0002), which no longer exists.
+struct (0xa00a0002) ConfirmWithCode {
+    secret: uint256 // preimage; the contract checks hash(secret) == secretHash
+}
 
 struct (0xa00a0003) CancelOrder {}
 
@@ -98,7 +116,7 @@ struct (0xa00a0005) CourierRelease {}
 
 type OrderMessage =
     | AcceptOrder
-    | ConfirmDelivery
+    | ConfirmWithCode
     | CancelOrder
     | ClaimExpired
     | CourierRelease
@@ -135,6 +153,7 @@ struct (0xa00a0000) CreateOrder {
     area: cell          // "to" city (destination)
     origin: cell        // "from" place (source, any text); "All world" = any origin
     senderContact: cell // sender's Telegram contact (opaque text)
+    secretHash: uint256 // hash of the sender's delivery code (see OrderExtra.secretHash)
 }
 
 type MarketplaceMessage = CreateOrder

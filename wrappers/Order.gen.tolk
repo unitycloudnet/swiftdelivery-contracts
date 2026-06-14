@@ -57,12 +57,17 @@ fun Order.sendAcceptOrder(
     return net.send(from, genericMsg);
 }
 
-fun Order.sendConfirmDelivery(self, from: address, config: SendParams = {}): SendResultList {
+fun Order.sendConfirmWithCode(
+    self,
+    from: address,
+    secret: uint256,
+    config: SendParams = {},
+): SendResultList {
     val genericMsg = createMessage({
         bounce: config.bounce,
         value: config.value,
         dest: self.address,
-        body: ConfirmDelivery {},
+        body: ConfirmWithCode { secret },
     });
     return net.send(from, genericMsg);
 }

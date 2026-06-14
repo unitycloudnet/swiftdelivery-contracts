@@ -55,13 +55,23 @@ fun Marketplace.sendCreateOrder(
     area: cell,
     origin: cell,
     senderContact: cell,
+    secretHash: uint256,
     config: SendParams = {},
 ): SendResultList {
     val genericMsg = createMessage({
         bounce: config.bounce,
         value: config.value,
         dest: self.address,
-        body: CreateOrder { reward, nonce, createdAt, description, area, origin, senderContact },
+        body: CreateOrder {
+            reward,
+            nonce,
+            createdAt,
+            description,
+            area,
+            origin,
+            senderContact,
+            secretHash,
+        },
     });
     return net.send(from, genericMsg);
 }
@@ -95,6 +105,7 @@ fun Marketplace.orderAddress(
     area: cell,
     origin: cell,
     senderContact: cell,
+    secretHash: uint256,
 ): address {
     return net.runGetMethod(
         self.address,
@@ -108,6 +119,7 @@ fun Marketplace.orderAddress(
             area,
             origin,
             senderContact,
+            secretHash,
         ],
     );
 }

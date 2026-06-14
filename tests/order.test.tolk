@@ -17,39 +17,68 @@ const DEADLINE = 60 * 60 // must match Order.tolk (1h testing value)
 // backwards past the deploy and the storage phase fails (-669).
 const BASE_TIME: uint32 = 2000000000
 
-// ---- happy path: Open -> Accepted -> Completed ----
+// A delivery secret and its on-chain commitment. The commitment is the
+// representation hash of a cell holding the 256-bit secret — exactly the
+// construct ConfirmWithCode verifies and the frontend reproduces with @ton/core.
+// Confirming with SECRET succeeding is the round-trip proof: the contract's
+// on-chain hash of SECRET matches the secretHash baked into the order's storage.
+const SECRET: uint256 = 0xC0DE1234C0DE1234C0DE1234C0DE1234C0DE1234C0DE1234C0DE1234C0DE1234
+const WRONG_SECRET: uint256 = 0xBADC0DE
 
-get fun `test happy path pays courier the reward and refunds sender change`() {
-    val (order, sender, courier, owner) = setupOrderTest();
+fun secretHashOf(secret: uint256): uint256 {
+    return beginCell().storeUint(secret, 256).endCell().hash();
+}
+
+// ---- happy path: Open -> Accepted -> Completed (courier confirms with the code) ----
+
+get fun `test confirm with the code pays the courier the reward`() {
+    val (order, _, courier, owner) = setupOrderTest();
 
     order.sendAcceptOrder(courier.address, createEmptyCell(), { value: ACCEPT_FEE });
 
     // Capture balances after accept, before confirm.
     val courierMid = testing.getAccountBalance(courier.address);
     val ownerMid = testing.getAccountBalance(owner.address);
-    val senderMid = testing.getAccountBalance(sender.address);
 
-    val r = order.sendConfirmDelivery(sender.address, { value: GAS });
-    expect(r).toHaveSuccessfulTx<ConfirmDelivery>({ from: sender.address, to: order.address });
+    // The courier learned the secret from the sender at hand-off and reveals it.
+    val r = order.sendConfirmWithCode(courier.address, SECRET, { value: GAS });
+    expect(r).toHaveSuccessfulTx<ConfirmWithCode>({ from: courier.address, to: order.address });
 
     // Contract must be destroyed.
     expect(testing.getAccountBalance(order.address)).toBeLess(ton("0.001"));
 
-    // Courier received exactly the reward (no deposit any more; tolerate fwd_fee).
+    // The courier (who called) received the reward PLUS the change of their GAS
+    // back (mode 64 returns the leftover to the caller). So their gain is at least
+    // the reward and at most the reward plus the GAS they attached.
     val courierGain = testing.getAccountBalance(courier.address) - courierMid;
     expect(courierGain).toBeGreater(REWARD - ton("0.01"));
-    expect(courierGain).toBeLess(REWARD + ton("0.01"));
-
-    // Sender got the change of their GAS back (mode 64), so the net cost of the
-    // confirm call is only the tx fee — far less than the full GAS they sent.
-    // Without the refund, senderGain would be about -GAS (-0.05).
-    val senderGain = testing.getAccountBalance(sender.address) - senderMid;
-    expect(senderGain).toBeGreater(-ton("0.03"));
+    expect(courierGain).toBeLess(REWARD + GAS);
 
     // Owner received the ~0.2 fee buffer as the platform's earnings, NOT a dust
-    // amount: this proves the buffer went to the platform, not back to the sender.
+    // amount: this proves the buffer went to the platform, not back to the caller.
     val ownerGain = testing.getAccountBalance(owner.address) - ownerMid;
     expect(ownerGain).toBeGreater(ton("0.2"));
+}
+
+// ---- a wrong code is rejected: the order stays Accepted and the money is safe ----
+
+get fun `test confirm with a wrong code is rejected`() {
+    val (order, _, courier, _) = setupOrderTest();
+    order.sendAcceptOrder(courier.address, createEmptyCell(), { value: ACCEPT_FEE });
+
+    val orderBefore = testing.getAccountBalance(order.address);
+
+    // A random secret whose hash does not match the order's secretHash.
+    val r = order.sendConfirmWithCode(courier.address, WRONG_SECRET, { value: GAS });
+    expect(r).toHaveFailedTx({
+        from: courier.address,
+        to: order.address,
+        exitCode: OrderErrors.BadCode,
+    });
+
+    // The order is untouched: still Accepted, contract alive, escrow intact.
+    expect(order.status()).toEqual(OrderStatus.Accepted);
+    expect(testing.getAccountBalance(order.address)).toBeGreater(orderBefore - GAS);
 }
 
 // ---- accept charges a fee buffer (not a stake) and starts the clock ----
@@ -120,6 +149,7 @@ get fun `test accept with a large reward does not overflow`() {
             owner: owner.address,
             senderContact: createEmptyCell(),
             courierContact: createEmptyCell(),
+            secretHash: 0,
         }).toCell(),
     });
     val res = order.deploy(sender.address, { value: ton("6") });
@@ -269,6 +299,7 @@ get fun `test cancel works with the real 0.1 create fee`() {
             owner: owner.address,
             senderContact: createEmptyCell(),
             courierContact: createEmptyCell(),
+            secretHash: 0,
         }).toCell(),
     });
     // Fund with reward + 0.1, exactly what the live UI attaches at create time.
@@ -389,19 +420,6 @@ get fun `test cannot release an order that is still open`() {
 
 // ---- access control ----
 
-get fun `test non-sender cannot confirm delivery`() {
-    val (order, _, courier, _) = setupOrderTest();
-    order.sendAcceptOrder(courier.address, createEmptyCell(), { value: ACCEPT_FEE });
-
-    val r = order.sendConfirmDelivery(courier.address, { value: GAS });
-    expect(r).toHaveFailedTx({
-        from: courier.address,
-        to: order.address,
-        exitCode: OrderErrors.NotSender,
-    });
-    expect(order.status()).toEqual(OrderStatus.Accepted);
-}
-
 get fun `test non-sender cannot cancel`() {
     val (order, _, courier, _) = setupOrderTest();
 
@@ -430,11 +448,13 @@ get fun `test cannot accept twice`() {
 }
 
 get fun `test cannot confirm before accepted`() {
-    val (order, sender, _, _) = setupOrderTest();
+    val (order, _, courier, _) = setupOrderTest();
 
-    val r = order.sendConfirmDelivery(sender.address, { value: GAS });
+    // Even with the correct code, an order that no courier has accepted yet cannot
+    // be confirmed — the status guard rejects it before the hash is checked.
+    val r = order.sendConfirmWithCode(courier.address, SECRET, { value: GAS });
     expect(r).toHaveFailedTx({
-        from: sender.address,
+        from: courier.address,
         to: order.address,
         exitCode: OrderErrors.WrongStatus,
     });
@@ -473,6 +493,7 @@ fun setupOrderTest(): (Order, Treasury, Treasury, Treasury) {
             owner: owner.address,
             senderContact: createEmptyCell(),
             courierContact: createEmptyCell(),
+            secretHash: secretHashOf(SECRET),
         }).toCell(),
     });
     val res = order.deploy(sender.address, { value: ton("1.3") });

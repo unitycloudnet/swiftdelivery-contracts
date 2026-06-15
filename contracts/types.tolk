@@ -12,11 +12,11 @@ enum OrderStatus: uint8 {
 enum OrderErrors {
     WrongStatus = 100
     NotSender = 101
-    NotCourier = 102 // courier-release attempted by someone other than the courier
-    FeeTooLow = 103  // courier attached less than the minimum accept fee
-    NotExpired = 104 // claim attempted before the deadline
+    NotCourier = 102     // courier-release attempted by someone other than the courier
+    FeeTooLow = 103      // courier attached less than the minimum accept fee
+    NotExpired = 104     // claim attempted before the deadline
     DeadlinePassed = 105 // courier-release attempted after the deadline
-    BadCode = 108 // confirm attempted with a secret whose hash does not match
+    BadCode = 108        // confirm attempted with a secret whose hash does not match
     InvalidMessage = 0xFFFF
 }
 
@@ -125,6 +125,7 @@ type OrderMessage =
 
 enum MarketplaceErrors {
     InsufficientValue = 200 // attached coins do not cover reward + create buffer
+    NotOwner = 201          // an owner-only admin message arrived from another address
     InvalidMessage = 0xFFFF
 }
 
@@ -156,4 +157,27 @@ struct (0xa00a0000) CreateOrder {
     secretHash: uint256 // hash of the sender's delivery code (see OrderExtra.secretHash)
 }
 
-type MarketplaceMessage = CreateOrder
+// Owner-only. Replace the compiled Order code the Marketplace deploys for FUTURE
+// orders. An order's address is the hash of its code + init data, so already
+// deployed orders keep running on the code they were born with — this only
+// changes orders created after the call. It lets the owner ship a fixed Order
+// without redeploying the Marketplace (which would change the Marketplace address
+// every wallet/indexer has saved). Old orders age out at the 30-day deadline.
+// See H-2 in the security audit.
+struct (0xa00a0006) UpdateOrderCode {
+    newCode: cell // the new compiled Order code
+}
+
+// Owner-only. Hand the platform over to a new owner address. Guards against a
+// lost or compromised owner key: the current owner can rotate it. Only NEW orders
+// record the new owner as their fee recipient (each order copies st.owner into its
+// extra cell at create time); orders already deployed still pay the previous owner
+// when they settle. See H-3 in the security audit.
+struct (0xa00a0007) TransferOwnership {
+    newOwner: address // the address that becomes the new platform owner
+}
+
+type MarketplaceMessage =
+    | CreateOrder
+    | UpdateOrderCode
+    | TransferOwnership

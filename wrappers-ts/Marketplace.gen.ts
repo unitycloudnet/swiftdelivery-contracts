@@ -235,19 +235,76 @@ export const CreateOrder = {
 }
 
 /**
- > type MarketplaceMessage = CreateOrder
+ > struct (0xa00a0006) UpdateOrderCode {
+ >     newCode: cell
+ > }
  */
-export type MarketplaceMessage = CreateOrder
+export interface UpdateOrderCode {
+    readonly $: 'UpdateOrderCode'
+    newCode: c.Cell
+}
 
-export const MarketplaceMessage = {
-    fromSlice(s: c.Slice): MarketplaceMessage {
-        return CreateOrder.fromSlice(s);
+export const UpdateOrderCode = {
+    PREFIX: 0xa00a0006,
+
+    create(args: {
+        newCode: c.Cell
+    }): UpdateOrderCode {
+        return {
+            $: 'UpdateOrderCode',
+            ...args
+        }
     },
-    store(self: MarketplaceMessage, b: c.Builder): void {
-        CreateOrder.store(self, b);
+    fromSlice(s: c.Slice): UpdateOrderCode {
+        loadAndCheckPrefix32(s, 0xa00a0006, 'UpdateOrderCode');
+        return {
+            $: 'UpdateOrderCode',
+            newCode: s.loadRef(),
+        }
     },
-    toCell(self: MarketplaceMessage): c.Cell {
-        return makeCellFrom<MarketplaceMessage>(self, MarketplaceMessage.store);
+    store(self: UpdateOrderCode, b: c.Builder): void {
+        b.storeUint(0xa00a0006, 32);
+        b.storeRef(self.newCode);
+    },
+    toCell(self: UpdateOrderCode): c.Cell {
+        return makeCellFrom<UpdateOrderCode>(self, UpdateOrderCode.store);
+    }
+}
+
+/**
+ > struct (0xa00a0007) TransferOwnership {
+ >     newOwner: address
+ > }
+ */
+export interface TransferOwnership {
+    readonly $: 'TransferOwnership'
+    newOwner: c.Address
+}
+
+export const TransferOwnership = {
+    PREFIX: 0xa00a0007,
+
+    create(args: {
+        newOwner: c.Address
+    }): TransferOwnership {
+        return {
+            $: 'TransferOwnership',
+            ...args
+        }
+    },
+    fromSlice(s: c.Slice): TransferOwnership {
+        loadAndCheckPrefix32(s, 0xa00a0007, 'TransferOwnership');
+        return {
+            $: 'TransferOwnership',
+            newOwner: s.loadAddress(),
+        }
+    },
+    store(self: TransferOwnership, b: c.Builder): void {
+        b.storeUint(0xa00a0007, 32);
+        b.storeAddress(self.newOwner);
+    },
+    toCell(self: TransferOwnership): c.Cell {
+        return makeCellFrom<TransferOwnership>(self, TransferOwnership.store);
     }
 }
 
@@ -290,10 +347,11 @@ function calculateDeployedAddress(code: c.Cell, data: c.Cell, options: DeployedA
 }
 
 export class Marketplace implements c.Contract {
-    static CodeCell = c.Cell.fromBase64('te6ccgECCgEAAScAART/APSkE/S88sgLAQIBYgIDAUbQ+JGRMOAg7UTQ+kjU1wsfA9csJQBQAATjAl8EhA8BxwDy9AQCASAFBgHyNAP6ANM/0x/U1NTU1wv/+Jcoggr68ICgvvLgyAmkKMj6UivPFMsfye1U+JJtiArI+lITzBnMGcv/yQfI+lIY+lQSzMwVzFj6As+EAss/Essfz5AAAAACzMnIz4kIAVMSyM+E0MzM+RbPC/+BAIzPC3QSzMzJgED7AAkAEb4o72omh9JBhAIBSAcIAZW1ur2omh9JGumNsQB5H0pCuYJZgll/+SE5H0pCX0qCmYJZmYoAn0BZ8IBCWWf5Y/nyAAAAAEJZmSA5GfCaGZmfItkZ8UAIGX/56hAJABe0PN2omh9JBjrhY/AAAA==');
+    static CodeCell = c.Cell.fromBase64('te6ccgECDAEAAXsAART/APSkE/S88sgLAQIBYgIDAczQ+JGRMOAg7UTQ+kjU1wsfA9csJQBQAATjAtcsJQBQADSOGDEz+JIhxwXy4MkC10wCyPpSEszLH8ntVODXLCUAUAA8jhc0+JJYxwXy4MkC+kgwyPpSEszLH8ntVOBfBIQPAccA8vQEAgEgBQYB8jQD+gDTP9Mf1NTU1NcL//iXKIIK+vCAoL7y4MgJpCjI+lIrzxTLH8ntVPiSbYgKyPpSE8wZzBnL/8kHyPpSGPpUEszMFcxY+gLPhALLPxLLH8+QAAAAAszJyM+JCAFTEsjPhNDMzPkWzwv/gQCMzwt0EszMyYBA+wALABG+KO9qJofSQYQCASAHCAIBIAkKABO7xH7UTQ10z5AIAZW1ur2omh9JGumNsQB5H0pCuYJZgll/+SE5H0pCX0qCmYJZmYoAn0BZ8IBCWWf5Y/nyAAAAAEJZmSA5GfCaGZmfItkZ8UAIGX/56hALABe0PN2omh9JBjrhY/AAAA==');
 
     static Errors = {
         'MarketplaceErrors.InsufficientValue': 200,
+        'MarketplaceErrors.NotOwner': 201,
         'MarketplaceErrors.InvalidMessage': 65535,
     }
 
@@ -322,8 +380,29 @@ export class Marketplace implements c.Contract {
         return new Marketplace(address, initialState);
     }
 
-    static createCellOfMarketplaceMessage(body: MarketplaceMessage) {
-        return MarketplaceMessage.toCell(body);
+    static createCellOfCreateOrder(body: {
+        reward: coins
+        nonce: uint64
+        createdAt: uint32
+        description: c.Cell
+        area: c.Cell
+        origin: c.Cell
+        senderContact: c.Cell
+        secretHash: uint256
+    }) {
+        return CreateOrder.toCell(CreateOrder.create(body));
+    }
+
+    static createCellOfUpdateOrderCode(body: {
+        newCode: c.Cell
+    }) {
+        return UpdateOrderCode.toCell(UpdateOrderCode.create(body));
+    }
+
+    static createCellOfTransferOwnership(body: {
+        newOwner: c.Address
+    }) {
+        return TransferOwnership.toCell(TransferOwnership.create(body));
     }
 
     async sendDeploy(provider: ContractProvider, via: Sender, msgValue: coins, extraOptions?: ExtraSendOptions) {
@@ -334,10 +413,39 @@ export class Marketplace implements c.Contract {
         });
     }
 
-    async sendMarketplaceMessage(provider: ContractProvider, via: Sender, msgValue: coins, body: MarketplaceMessage, extraOptions?: ExtraSendOptions) {
+    async sendCreateOrder(provider: ContractProvider, via: Sender, msgValue: coins, body: {
+        reward: coins
+        nonce: uint64
+        createdAt: uint32
+        description: c.Cell
+        area: c.Cell
+        origin: c.Cell
+        senderContact: c.Cell
+        secretHash: uint256
+    }, extraOptions?: ExtraSendOptions) {
         return provider.internal(via, {
             value: msgValue,
-            body: MarketplaceMessage.toCell(body),
+            body: CreateOrder.toCell(CreateOrder.create(body)),
+            ...extraOptions
+        });
+    }
+
+    async sendUpdateOrderCode(provider: ContractProvider, via: Sender, msgValue: coins, body: {
+        newCode: c.Cell
+    }, extraOptions?: ExtraSendOptions) {
+        return provider.internal(via, {
+            value: msgValue,
+            body: UpdateOrderCode.toCell(UpdateOrderCode.create(body)),
+            ...extraOptions
+        });
+    }
+
+    async sendTransferOwnership(provider: ContractProvider, via: Sender, msgValue: coins, body: {
+        newOwner: c.Address
+    }, extraOptions?: ExtraSendOptions) {
+        return provider.internal(via, {
+            value: msgValue,
+            body: TransferOwnership.toCell(TransferOwnership.create(body)),
             ...extraOptions
         });
     }
@@ -350,6 +458,11 @@ export class Marketplace implements c.Contract {
     async getOwner(provider: ContractProvider): Promise<c.Address> {
         const r = StackReader.fromGetMethod(1, await provider.get('owner', []));
         return r.readSlice().loadAddress();
+    }
+
+    async getOrderCodeHash(provider: ContractProvider): Promise<uint256> {
+        const r = StackReader.fromGetMethod(1, await provider.get('orderCodeHash', []));
+        return r.readBigInt();
     }
 
     async getOrderAddress(provider: ContractProvider, sender: c.Address, reward: coins, nonce: uint64, createdAt: uint32, description: c.Cell, area: c.Cell, origin: c.Cell, senderContact: c.Cell, secretHash: uint256): Promise<c.Address> {

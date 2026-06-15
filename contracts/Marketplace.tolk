@@ -18,7 +18,7 @@ const CREATE_MIN_BUFFER = ton("0.05")
 
 contract Marketplace {
     author: "SwiftDelivery"
-    version: "1.9.0"
+    version: "1.10.0"
     description: "Registry that deploys Order escrow contracts"
     storage: MarketplaceStorage
     incomingMessages: MarketplaceMessage
@@ -75,6 +75,19 @@ fun onInternalMessage(in: InMessage) {
             });
             deployMsg.send(SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE);
         }
+        UpdateOrderCode => {
+            // Owner-only: swap the Order code used for FUTURE deploys. Existing
+            // orders are unaffected (their address is fixed by their own code).
+            assert (in.senderAddress == st.owner) throw MarketplaceErrors.NotOwner;
+            st.orderCode = msg.newCode;
+            st.save();
+        }
+        TransferOwnership => {
+            // Owner-only: rotate the platform owner (e.g. a compromised key).
+            assert (in.senderAddress == st.owner) throw MarketplaceErrors.NotOwner;
+            st.owner = msg.newOwner;
+            st.save();
+        }
         else => {
             assert (in.body.isEmpty()) throw MarketplaceErrors.InvalidMessage;
         }
@@ -91,6 +104,13 @@ get fun orderCount(): uint32 {
 get fun owner(): address {
     val st = lazy MarketplaceStorage.load();
     return st.owner;
+}
+
+// Hash of the Order code the Marketplace currently deploys. Lets ops / the
+// frontend confirm which Order version is live after an UpdateOrderCode.
+get fun orderCodeHash(): uint256 {
+    val st = lazy MarketplaceStorage.load();
+    return st.orderCode.hash();
 }
 
 // Recompute the address of an order from its initial data. The frontend uses

@@ -13,6 +13,7 @@ const CREATED_AT: uint32 = 1700000000
 // Delivery secret and its on-chain commitment (see order.test.tolk). The order is
 // created with this hash so the courier can later confirm with the matching code.
 const SECRET: uint256 = 0xC0DE1234C0DE1234C0DE1234C0DE1234C0DE1234C0DE1234C0DE1234C0DE1234
+
 fun secretHashOf(secret: uint256): uint256 {
     return beginCell().storeUint(secret, 256).endCell().hash();
 }
@@ -142,6 +143,78 @@ get fun `test create rejects an order that does not cover the reward`() {
         secretHashOf(SECRET),
     );
     expect(testing.getAccountBalance(orderAddr)).toEqual(0 as coins);
+}
+
+// ---- H-2: owner can swap the Order code used for future deploys ----
+
+get fun `test owner can update the order code`() {
+    val (market, _, _, deployer) = setupMarketTest();
+
+    val before = market.orderCodeHash();
+    // Any different code cell proves the swap; an empty cell hashes differently.
+    val r = market.sendUpdateOrderCode(deployer.address, createEmptyCell(), { value: ton("0.1") });
+    expect(r).toHaveSuccessfulTx<UpdateOrderCode>({ from: deployer.address, to: market.address });
+
+    expect(market.orderCodeHash()).toNotEqual(before);
+}
+
+get fun `test non-owner cannot update the order code`() {
+    val (market, sender, _, _) = setupMarketTest();
+
+    val before = market.orderCodeHash();
+    val r = market.sendUpdateOrderCode(sender.address, createEmptyCell(), { value: ton("0.1") });
+    expect(r).toHaveFailedTx({
+        from: sender.address,
+        to: market.address,
+        exitCode: MarketplaceErrors.NotOwner,
+    });
+    // Storage untouched.
+    expect(market.orderCodeHash()).toEqual(before);
+}
+
+// ---- H-3: owner can be rotated; rights follow the new owner ----
+
+get fun `test owner can transfer ownership and rights follow`() {
+    val (market, sender, _, deployer) = setupMarketTest();
+
+    expect(market.owner()).toEqual(deployer.address);
+
+    val r = market.sendTransferOwnership(deployer.address, sender.address, { value: ton("0.1") });
+    expect(r).toHaveSuccessfulTx<TransferOwnership>({ from: deployer.address, to: market.address });
+    expect(market.owner()).toEqual(sender.address);
+
+    // The old owner has lost admin rights.
+    val old = market.sendUpdateOrderCode(
+        deployer.address,
+        createEmptyCell(),
+        { value: ton("0.1") },
+    );
+    expect(old).toHaveFailedTx({
+        from: deployer.address,
+        to: market.address,
+        exitCode: MarketplaceErrors.NotOwner,
+    });
+
+    // The new owner has gained them.
+    val fresh = market.sendUpdateOrderCode(
+        sender.address,
+        createEmptyCell(),
+        { value: ton("0.1") },
+    );
+    expect(fresh).toHaveSuccessfulTx<UpdateOrderCode>({ from: sender.address, to: market.address });
+}
+
+get fun `test non-owner cannot transfer ownership`() {
+    val (market, _, courier, deployer) = setupMarketTest();
+
+    val r = market.sendTransferOwnership(courier.address, courier.address, { value: ton("0.1") });
+    expect(r).toHaveFailedTx({
+        from: courier.address,
+        to: market.address,
+        exitCode: MarketplaceErrors.NotOwner,
+    });
+    // Ownership unchanged.
+    expect(market.owner()).toEqual(deployer.address);
 }
 
 // Deploys a Marketplace that knows the compiled Order code.

@@ -76,6 +76,36 @@ fun Marketplace.sendCreateOrder(
     return net.send(from, genericMsg);
 }
 
+fun Marketplace.sendUpdateOrderCode(
+    self,
+    from: address,
+    newCode: cell,
+    config: SendParams = {},
+): SendResultList {
+    val genericMsg = createMessage({
+        bounce: config.bounce,
+        value: config.value,
+        dest: self.address,
+        body: UpdateOrderCode { newCode },
+    });
+    return net.send(from, genericMsg);
+}
+
+fun Marketplace.sendTransferOwnership(
+    self,
+    from: address,
+    newOwner: address,
+    config: SendParams = {},
+): SendResultList {
+    val genericMsg = createMessage({
+        bounce: config.bounce,
+        value: config.value,
+        dest: self.address,
+        body: TransferOwnership { newOwner },
+    });
+    return net.send(from, genericMsg);
+}
+
 /// Send message to the contract with a custom body cell
 fun Marketplace.sendAny(self, from: address, body: cell, config: SendParams = {}): SendResultList {
     val genericMsg = createMessage({
@@ -93,6 +123,10 @@ fun Marketplace.orderCount(self): uint32 {
 
 fun Marketplace.owner(self): address {
     return net.runGetMethod(self.address, "owner");
+}
+
+fun Marketplace.orderCodeHash(self): uint256 {
+    return net.runGetMethod(self.address, "orderCodeHash");
 }
 
 fun Marketplace.orderAddress(

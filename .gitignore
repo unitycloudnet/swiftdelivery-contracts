@@ -39,3 +39,4 @@ gen/
 # Internal dev scripts (not part of public release)
 scripts/livetest.tolk
 scripts/livetest2.tolk
+scripts/livetest3.tolk

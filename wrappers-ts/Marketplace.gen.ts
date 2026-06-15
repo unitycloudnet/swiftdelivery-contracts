@@ -347,11 +347,12 @@ function calculateDeployedAddress(code: c.Cell, data: c.Cell, options: DeployedA
 }
 
 export class Marketplace implements c.Contract {
-    static CodeCell = c.Cell.fromBase64('te6ccgECDAEAAXsAART/APSkE/S88sgLAQIBYgIDAczQ+JGRMOAg7UTQ+kjU1wsfA9csJQBQAATjAtcsJQBQADSOGDEz+JIhxwXy4MkC10wCyPpSEszLH8ntVODXLCUAUAA8jhc0+JJYxwXy4MkC+kgwyPpSEszLH8ntVOBfBIQPAccA8vQEAgEgBQYB8jQD+gDTP9Mf1NTU1NcL//iXKIIK+vCAoL7y4MgJpCjI+lIrzxTLH8ntVPiSbYgKyPpSE8wZzBnL/8kHyPpSGPpUEszMFcxY+gLPhALLPxLLH8+QAAAAAszJyM+JCAFTEsjPhNDMzPkWzwv/gQCMzwt0EszMyYBA+wALABG+KO9qJofSQYQCASAHCAIBIAkKABO7xH7UTQ10z5AIAZW1ur2omh9JGumNsQB5H0pCuYJZgll/+SE5H0pCX0qCmYJZmYoAn0BZ8IBCWWf5Y/nyAAAAAEJZmSA5GfCaGZmfItkZ8UAIGX/56hALABe0PN2omh9JBjrhY/AAAA==');
+    static CodeCell = c.Cell.fromBase64('te6ccgECDQEAAYkAART/APSkE/S88sgLAQIBYgIDAczQ+JGRMOAg7UTQ+kjU1wsfA9csJQBQAATjAtcsJQBQADSOGDEz+JIhxwXy4MkC10wCyPpSEszLH8ntVODXLCUAUAA8jhc0+JJYxwXy4MkC+kgwyPpSEszLH8ntVOBfBIQPAccA8vQEAgEgBgcC/jQD+gDTP9Mf1NTU1NcL/yeCEDuaygC+8uDK+Jcoggr68ICgvvLgyAmkKMj6UivPFMsfye1U+JJtiArI+lITzBnMGcv/yQfI+lIY+lQSzMwVzFj6As+EAss/Essfz5AAAAACzMnIz4kIAVMSyM+E0MzM+RbPC/+BAIzPC3QSzMwMBQAKyYBA+wAAEb4o72omh9JBhAIBIAgJAgEgCgsAE7vEftRNDXTPkAgBlbW6vaiaH0ka6Y2xAHkfSkK5glmCWX/5ITkfSkJfSoKZglmZigCfQFnwgEJZZ/lj+fIAAAAAQlmZIDkZ8JoZmZ8i2RnxQAgZf/nqEAwAF7Q83aiaH0kGOuFj8AAA');
 
     static Errors = {
         'MarketplaceErrors.InsufficientValue': 200,
         'MarketplaceErrors.NotOwner': 201,
+        'MarketplaceErrors.RewardTooLow': 202,
         'MarketplaceErrors.InvalidMessage': 65535,
     }
 

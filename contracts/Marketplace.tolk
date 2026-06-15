@@ -16,9 +16,18 @@ import "types"
 // would deliver for nothing.
 const CREATE_MIN_BUFFER = ton("0.05")
 
+// Lowest reward an order may advertise. A reward of 0 (or dust) creates an order
+// no courier has any reason to accept: it just sits Open, clutters the Feed, and
+// strands the sender's 0.1 TON create fee. Requiring a real minimum cuts that
+// spam at the source while staying low enough to allow any genuine small job.
+// It is a fixed TON value, so in USD it drifts with the TON price (~$3-5 today);
+// the UI types the reward in USD and locks it in TON at create time. See M-5 in
+// the security audit.
+const MIN_REWARD = ton("1")
+
 contract Marketplace {
     author: "SwiftDelivery"
-    version: "1.10.0"
+    version: "1.11.0"
     description: "Registry that deploys Order escrow contracts"
     storage: MarketplaceStorage
     incomingMessages: MarketplaceMessage
@@ -30,6 +39,9 @@ fun onInternalMessage(in: InMessage) {
 
     match (msg) {
         CreateOrder => {
+            // Reject zero/dust-reward spam: an order no courier would take only
+            // clutters the Feed and strands the sender's create fee (M-5).
+            assert (msg.reward >= MIN_REWARD) throw MarketplaceErrors.RewardTooLow;
             // Refuse to deploy an order the sender did not actually fund. The
             // reward is forwarded to the child as its escrow, so the attached
             // value must cover it (plus a small gas/fee buffer).

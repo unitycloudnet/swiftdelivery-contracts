@@ -126,6 +126,7 @@ type OrderMessage =
 enum MarketplaceErrors {
     InsufficientValue = 200 // attached coins do not cover reward + create buffer
     NotOwner = 201          // an owner-only admin message arrived from another address
+    RewardTooLow = 202      // stated reward is below MIN_REWARD (anti-spam, M-5)
     InvalidMessage = 0xFFFF
 }
 

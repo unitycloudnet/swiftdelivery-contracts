@@ -145,6 +145,34 @@ get fun `test create rejects an order that does not cover the reward`() {
     expect(testing.getAccountBalance(orderAddr)).toEqual(0 as coins);
 }
 
+// ---- M-5: a reward below the minimum is rejected (anti-spam) ----
+
+get fun `test create rejects a reward below the minimum`() {
+    val (market, sender, _, _) = setupMarketTest();
+
+    // 0.5 TON reward is below the 1 TON floor; attach enough to cover it so only
+    // the reward floor (not the funding check) can trip.
+    val r = market.sendCreateOrder(
+        sender.address,
+        ton("0.5"),
+        NONCE,
+        CREATED_AT,
+        createEmptyCell(),
+        createEmptyCell(),
+        createEmptyCell(),
+        createEmptyCell(),
+        secretHashOf(SECRET),
+        { value: ton("0.7") },
+    );
+    expect(r).toHaveFailedTx({
+        from: sender.address,
+        to: market.address,
+        exitCode: MarketplaceErrors.RewardTooLow,
+    });
+    // Nothing was created.
+    expect(market.orderCount()).toEqual(0);
+}
+
 // ---- H-2: owner can swap the Order code used for future deploys ----
 
 get fun `test owner can update the order code`() {

@@ -30,7 +30,7 @@ const RELEASE_FEE = ton("0.2")
 
 // One delivery order: an escrow plus a small state machine.
 //   Open --AcceptOrder(courier, +0.1 fee)--> Accepted
-//        --ConfirmWithCode(anyone with the secret, +0.05 gas)--> Completed  (reward -> courier, caller's change back, ~0.2 buffer -> owner, self-destruct)
+//        --ConfirmWithCode(the courier only, +0.05 gas)--> Completed  (reward + courier's change in ONE transfer, ~0.2 buffer -> owner, self-destruct)
 //        --ClaimExpired(sender, after deadline)--> Expired  (reward + sender's change in ONE transfer, ~0.2 buffer -> owner, courier gets nothing, self-destruct)
 //        --CourierRelease(courier, +0.2 fee, BEFORE deadline only)--> Open  (order reopens; accept fee + release fee accumulate in contract; owner paid at terminal state only; courier gets nothing back. After the deadline this is rejected — the courier has no actions left.)
 //   Open --CancelOrder(sender, +0.3 fee)--> Cancelled       (reward -> sender; the create fee is kept and the 0.3 cancel fee is added, so ~0.4 -> owner, self-destruct)
@@ -38,14 +38,16 @@ const RELEASE_FEE = ton("0.2")
 // Delivery is confirmed by a CODE, not a button: the sender's app picks a 256-bit
 // secret at create time and puts only its hash on-chain (secretHash). The courier
 // learns the secret from the sender at hand-off (a QR code) and reveals it with
-// ConfirmWithCode; the reward is paid only when hash(secret) == secretHash. So the
-// courier is paid ONLY with the sender's code — there is no sender "confirm" button
+// ConfirmWithCode; the reward is paid only when hash(secret) == secretHash AND the
+// caller is the courier who accepted the order. So the courier is paid ONLY with
+// the sender's code, and only the courier can trigger that payment — there is no
+// sender "confirm" button
 // to stall, and a courier with no code cannot be paid (the order expires to the
 // sender). The contract checks an objective math fact (the hash), so neither side's
 // word matters and no arbiter is needed.
 contract Order {
     author: "SwiftDelivery"
-    version: "1.17.0"
+    version: "1.18.0"
     description: "A single delivery order with escrow"
     storage: OrderStorage
     incomingMessages: OrderMessage
@@ -74,51 +76,50 @@ fun onInternalMessage(in: InMessage) {
         }
         ConfirmWithCode => {
             assert (s.status == OrderStatus.Accepted) throw OrderErrors.WrongStatus;
+            // Only the courier who accepted this order may confirm it. The secret
+            // is the delivery proof, but binding the call to s.courier matches the
+            // real hand-off (only the courier scans the sender's QR) and closes the
+            // gap where ANYONE who learned a leaked secret could force settlement
+            // before delivery. status Accepted guarantees courier is set, so `!` is
+            // safe. It also means the single payee is the courier, which lets the
+            // reward and the courier's gas change merge into ONE transfer below.
+            assert (s.courier! == in.senderAddress) throw OrderErrors.NotCourier;
             // Delivery proof: the hash of the revealed secret must match the one
-            // fixed at create time. This hash comparison is the ONLY authorization
-            // — we do NOT check the caller, because the reward is paid to the
-            // courier from storage no matter who sends the message, and in practice
-            // only the sender and (after hand-off) the courier ever know the code.
-            // hash(secret) is the representation hash of a cell holding the 256-bit
-            // secret, which the frontend reproduces with @ton/core (round-trip
-            // covered by a test). The preimage becomes public here, but the order
-            // turns terminal in the same transaction, so a replay is impossible.
+            // fixed at create time. hash(secret) is the representation hash of a
+            // cell holding the 256-bit secret, which the frontend reproduces with
+            // @ton/core (round-trip covered by a test). The preimage becomes public
+            // here, but the order turns terminal in the same transaction, so a
+            // replay is impossible.
             val extra = s.extra.load();
             val h = beginCell().storeUint(msg.secret, 256).endCell().hash();
             assert (h == extra.secretHash) throw OrderErrors.BadCode;
             s.status = OrderStatus.Completed;
             s.save();
-            // 1. The reward (the sender's escrow) goes to the courier.
-            //    PAY_FEES_SEPARATELY takes the forwarding fee from the contract
-            //    balance, so the courier receives exactly the reward.
+            // 1. The reward (the sender's escrow) goes to the courier in ONE
+            //    message. Because the caller is now guaranteed to BE the courier,
+            //    the reward and the courier's gas change go to the same wallet, so
+            //    they merge: value = the reward, and mode 64 carries the unused part
+            //    of THIS message's value (the ~0.05 gas change) on top. The courier
+            //    receives the full reward plus most of their gas back, paying only
+            //    the tx fee — the same merge ClaimExpired/CancelOrder use, no
+            //    two-messages-to-one-wallet. The ~0.2 buffer stays on the balance.
             val pay = createMessage({
                 bounce: BounceMode.NoBounce,
                 value: s.reward,
                 dest: s.courier!,
             });
-            pay.send(SEND_MODE_PAY_FEES_SEPARATELY);
-            // 2. Return the unused part of THIS message's value (the caller's change
-            //    from the ~0.05 gas they attached) back to the caller, so the
-            //    contract balance does not keep growing — the ~0.2 buffer it already
-            //    holds is enough. Mode 64 carries exactly the leftover of the
-            //    incoming message, minus this transaction's gas.
-            val change = createMessage({
-                bounce: BounceMode.NoBounce,
-                value: 0 as coins,
-                dest: in.senderAddress,
-            });
-            change.send(SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE);
-            // 3. Everything left over (the ~0.2 TON service fee) is the platform's
+            pay.send(SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE);
+            // 2. Everything left over (the ~0.2 TON service fee) is the platform's
             //    earnings; send it to the owner and self-destruct.
             val fee = createMessage({
                 bounce: BounceMode.NoBounce,
                 value: 0 as coins,
                 dest: extra.owner,
             });
-            // SAFETY: terminal state. The reward already left for the courier and
-            // the caller's change was returned above; only the fee buffer remains,
-            // which is the platform's earnings. Draining it and destroying the
-            // contract is the intended end of a completed order.
+            // SAFETY: terminal state. The reward already left for the courier above;
+            // only the fee buffer remains, which is the platform's earnings.
+            // Draining it and destroying the contract is the intended end of a
+            // completed order.
             fee.send(SEND_MODE_CARRY_ALL_BALANCE | SEND_MODE_DESTROY);
         }
         ClaimExpired => {

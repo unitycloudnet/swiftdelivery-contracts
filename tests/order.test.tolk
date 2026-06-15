@@ -9,7 +9,7 @@ const GAS = ton("0.05")
 const REWARD = ton("1")
 const ACCEPT_FEE = ton("0.1") // courier's service fee (>= MIN_ACCEPT_FEE 0.1)
 const BELOW_FEE = ton("0.02") // below MIN_ACCEPT_FEE; accept must reject it
-const CANCEL_FEE = ton("0.3")  // sender's cancel fee; must match Order.tolk
+const CANCEL_FEE = ton("0.3") // sender's cancel fee; must match Order.tolk
 const RELEASE_FEE = ton("0.2") // courier's release fee; must match Order.tolk
 const DEADLINE = 60 * 60 // must match Order.tolk (1h testing value)
 // A fixed "now" for time-dependent tests. Must be in the FUTURE relative to the
@@ -74,6 +74,30 @@ get fun `test confirm with a wrong code is rejected`() {
         from: courier.address,
         to: order.address,
         exitCode: OrderErrors.BadCode,
+    });
+
+    // The order is untouched: still Accepted, contract alive, escrow intact.
+    expect(order.status()).toEqual(OrderStatus.Accepted);
+    expect(testing.getAccountBalance(order.address)).toBeGreater(orderBefore - GAS);
+}
+
+// ---- only the courier may confirm: a stranger (even one who knows the code) is rejected ----
+
+get fun `test confirm from a non-courier is rejected even with the right code`() {
+    val (order, sender, courier, _) = setupOrderTest();
+    order.sendAcceptOrder(courier.address, createEmptyCell(), { value: ACCEPT_FEE });
+
+    val orderBefore = testing.getAccountBalance(order.address);
+
+    // The sender knows the secret (they made it) and submits the CORRECT code, but
+    // they are not the courier who accepted, so the call must fail: the secret is
+    // not enough — only the courier's wallet can trigger payment. This closes the
+    // gap where anyone holding a leaked code could force settlement before delivery.
+    val r = order.sendConfirmWithCode(sender.address, SECRET, { value: GAS });
+    expect(r).toHaveFailedTx({
+        from: sender.address,
+        to: order.address,
+        exitCode: OrderErrors.NotCourier,
     });
 
     // The order is untouched: still Accepted, contract alive, escrow intact.

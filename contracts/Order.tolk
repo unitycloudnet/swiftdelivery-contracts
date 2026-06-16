@@ -1,9 +1,8 @@
 import "types"
 
 // How long a courier has to deliver, counted from the moment they accept.
-// ⚠️ TESTING VALUE: 1 hour. Restore to 30 days (30 * 24 * 60 * 60) before any
-// production / mainnet deploy.
-const DEADLINE = 60 * 60 // 1 hour, in seconds
+// Production value for mainnet: 14 days.
+const DEADLINE = 14 * 24 * 60 * 60 // 14 days, in seconds
 
 // Lowest value a courier must attach to accept. There is no courier stake any
 // more: the courier pays a flat 0.1 TON service fee (from the UI) that stays on
@@ -201,8 +200,8 @@ fun onInternalMessage(in: InMessage) {
             // status Accepted guarantees courier is set, so `!` is safe here.
             assert (s.courier! == in.senderAddress) throw OrderErrors.NotCourier;
             // A courier may give up ONLY before the deadline. Once the delivery
-            // window has passed there is no point reopening an order that is a month
-            // (or more) stale — a new courier has nothing left to deliver — so after
+            // window has passed there is no point reopening an order that is two
+            // weeks (or more) stale — a new courier has nothing left to deliver — so after
             // the deadline the courier has no actions at all and the order can only
             // be settled by the sender (ClaimExpired or ConfirmDelivery). This guard
             // is the exact mirror of ClaimExpired's `now > acceptedAt + DEADLINE`:

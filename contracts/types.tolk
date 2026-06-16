@@ -163,7 +163,7 @@ struct (0xa00a0000) CreateOrder {
 // deployed orders keep running on the code they were born with — this only
 // changes orders created after the call. It lets the owner ship a fixed Order
 // without redeploying the Marketplace (which would change the Marketplace address
-// every wallet/indexer has saved). Old orders age out at the 30-day deadline.
+// every wallet/indexer has saved). Old orders age out at the 14-day deadline.
 // See H-2 in the security audit.
 struct (0xa00a0006) UpdateOrderCode {
     newCode: cell // the new compiled Order code

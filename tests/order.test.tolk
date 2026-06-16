@@ -11,7 +11,7 @@ const ACCEPT_FEE = ton("0.1") // courier's service fee (>= MIN_ACCEPT_FEE 0.1)
 const BELOW_FEE = ton("0.02") // below MIN_ACCEPT_FEE; accept must reject it
 const CANCEL_FEE = ton("0.3") // sender's cancel fee; must match Order.tolk
 const RELEASE_FEE = ton("0.2") // courier's release fee; must match Order.tolk
-const DEADLINE = 60 * 60 // must match Order.tolk (1h testing value)
+const DEADLINE = 14 * 24 * 60 * 60 // must match Order.tolk (14 days)
 // A fixed "now" for time-dependent tests. Must be in the FUTURE relative to the
 // emulator's default wall-clock time, otherwise setNow() would move time
 // backwards past the deploy and the storage phase fails (-669).
@@ -246,7 +246,7 @@ get fun `test cannot claim before the deadline`() {
     testing.setNow(BASE_TIME);
     order.sendAcceptOrder(courier.address, createEmptyCell(), { value: ACCEPT_FEE });
 
-    // Only a little time has passed — far short of 30 days.
+    // Only a little time has passed — far short of 14 days.
     testing.setNow(BASE_TIME + 1000);
     val stranger = testing.treasury("stranger");
     val r = order.sendClaimExpired(stranger.address, { value: GAS });
